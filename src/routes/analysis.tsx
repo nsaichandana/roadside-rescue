@@ -1,4 +1,8 @@
 import {
+  analyzeEmergency,
+} from "@/ai/gemini";
+
+import {
   createFileRoute,
   Link,
   useNavigate,
@@ -230,28 +234,73 @@ function Analysis() {
     useState<AnalysisData | null>(
       null
     );
+  const [aiResponse, setAiResponse] =
+    useState("");
+  
+  const [loadingAI, setLoadingAI] =
+    useState(false);
 
   useEffect(() => {
-    const savedAnalysis =
-      localStorage.getItem(
-        "roadsos-analysis"
-      );
+      async function loadAnalysis() {
+        const savedAnalysis =
+          localStorage.getItem(
+            "roadsos-analysis"
+          );
+    
+        if (
+          savedAnalysis
+        ) {
+          try {
+            const parsed =
+              JSON.parse(
+                savedAnalysis
+              );
+    
+            setAnalysis(
+              parsed
+            );
+    
+            setLoadingAI(
+              true
+            );
+    
+            let response =
+              "";
 
-    if (
-      savedAnalysis
-    ) {
-      try {
-        setAnalysis(
-          JSON.parse(
-            savedAnalysis
-          )
-        );
-      } catch {
-        console.log(
-          "Failed to load analysis"
-        );
+            try {
+              response =
+                await analyzeEmergency(
+                  parsed.input
+                );
+            } catch (error) {
+              console.error(
+                "Gemini failed:",
+                error
+              );
+
+              response =
+                "AI analysis temporarily unavailable due to API rate limits. Please try again shortly.";
+            }
+
+            setAiResponse(response);
+    
+            setAiResponse(
+              response
+            );
+          } catch (error) {
+            console.error(
+              "Failed to load analysis",
+              error
+            );
+          } finally {
+            setLoadingAI(
+              false
+            );
+          }
+        }
       }
-    }
+    
+      loadAnalysis();
   }, []);
 
   if (!analysis) {
@@ -404,14 +453,24 @@ function Analysis() {
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
+        <div className="bg-card border border-border rounded-2xl p-5 shadow-card">
           <p className="text-xs uppercase tracking-wider text-primary font-semibold">
-            Emergency Intelligence
+            Gemini AI Emergency Intelligence
           </p>
 
-          <p className="text-sm mt-2 text-muted-foreground">
-            This emergency analysis is shared across SOS broadcasting, nearby service discovery, and emergency routing systems.
-          </p>
+          {loadingAI ? (
+            <div className="mt-4 flex items-center gap-3">
+              <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+
+              <p className="text-sm text-muted-foreground">
+              AI is analyzing the emergency...
+              </p>
+            </div>
+        ) : (
+          <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+            {aiResponse}
+          </div>
+        )}
         </div>
 
         <div className="grid grid-cols-2 gap-3 pt-2">
