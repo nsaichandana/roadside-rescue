@@ -13,21 +13,17 @@ import {
   User,
   Phone,
   Heart,
-  CheckCircle2,
 } from "lucide-react";
+
+import {
+  saveUserProfile,
+  getUserProfile,
+} from "@/firebase/users";
 
 export const Route =
   createFileRoute("/setup")({
     component: Setup,
   });
-
-type FormData = {
-  fullName: string;
-  phone: string;
-  emergency1: string;
-  emergency2: string;
-  bloodGroup: string;
-};
 
 function Field({
   icon: Icon,
@@ -38,10 +34,15 @@ function Field({
   onChange,
 }: {
   icon: any;
+
   label: string;
+
   type?: string;
+
   placeholder: string;
+
   value: string;
+
   onChange: (
     value: string
   ) => void;
@@ -75,70 +76,109 @@ function Setup() {
   const navigate =
     useNavigate();
 
-  const [saved, setSaved] =
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
     useState(false);
 
   const [formData, setFormData] =
-    useState<FormData>({
+    useState({
       fullName: "",
+
       phone: "",
+
       emergency1: "",
+
       emergency2: "",
+
       bloodGroup: "O+",
     });
 
   useEffect(() => {
-    const savedUser =
-      localStorage.getItem(
-        "roadsos-user"
-      );
-
-    if (savedUser) {
+    async function loadUser() {
       try {
-        setFormData(
-          JSON.parse(
-            savedUser
-          )
+        const profile =
+          await getUserProfile();
+
+        if (profile) {
+          setFormData(
+            profile
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Failed to load user profile",
+          error
         );
-      } catch {
-        console.log(
-          "Failed to load saved user"
+      } finally {
+        setLoading(
+          false
         );
       }
     }
+
+    loadUser();
   }, []);
 
-  const handleSubmit = (
-    e: React.FormEvent
-  ) => {
-    e.preventDefault();
+  const handleSubmit =
+    async (
+      e: React.FormEvent
+    ) => {
+      e.preventDefault();
 
-    if (
-      !formData.fullName ||
-      !formData.phone
-    ) {
-      alert(
-        "Please fill in your name and phone number."
-      );
+      try {
+        setSaving(true);
 
-      return;
-    }
+        await Promise.race([
+          saveUserProfile(formData),
+        
+          new Promise((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Timeout saving profile"
+                  )
+                ),
+              10000
+            )
+          ),
+        ]);
 
-    localStorage.setItem(
-      "roadsos-user",
-      JSON.stringify(
-        formData
-      )
+        localStorage.setItem(
+          "roadsos-user",
+          JSON.stringify(
+            formData
+          )
+        );
+
+        navigate({
+          to: "/home",
+        });
+      } catch (error) {
+        console.error(
+          "Failed to save profile",
+          error
+        );
+      } finally {
+        setSaving(false);
+      }
+    };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto" />
+
+          <p className="mt-4 text-sm text-muted-foreground">
+            Loading profile...
+          </p>
+        </div>
+      </div>
     );
-
-    setSaved(true);
-
-    setTimeout(() => {
-      navigate({
-        to: "/home",
-      });
-    }, 1000);
-  };
+  }
 
   return (
     <div className="min-h-screen bg-background pb-10">
@@ -160,7 +200,7 @@ function Setup() {
           </h1>
 
           <p className="text-xs text-muted-foreground">
-            Your emergency profile is stored securely on this device
+            Cloud synced emergency profile
           </p>
         </div>
       </header>
@@ -183,6 +223,7 @@ function Setup() {
           ) =>
             setFormData({
               ...formData,
+
               fullName:
                 value,
             })
@@ -202,6 +243,7 @@ function Setup() {
           ) =>
             setFormData({
               ...formData,
+
               phone:
                 value,
             })
@@ -212,7 +254,7 @@ function Setup() {
           icon={Phone}
           label="Emergency Contact 1"
           type="tel"
-          placeholder="Parent / spouse"
+          placeholder="Parent / Spouse"
           value={
             formData.emergency1
           }
@@ -221,6 +263,7 @@ function Setup() {
           ) =>
             setFormData({
               ...formData,
+
               emergency1:
                 value,
             })
@@ -231,7 +274,7 @@ function Setup() {
           icon={Phone}
           label="Emergency Contact 2"
           type="tel"
-          placeholder="Friend / sibling"
+          placeholder="Friend / Sibling"
           value={
             formData.emergency2
           }
@@ -240,6 +283,7 @@ function Setup() {
           ) =>
             setFormData({
               ...formData,
+
               emergency2:
                 value,
             })
@@ -275,13 +319,12 @@ function Setup() {
                     b
                   }
                   onChange={() =>
-                    setFormData(
-                      {
-                        ...formData,
-                        bloodGroup:
-                          b,
-                      }
-                    )
+                    setFormData({
+                      ...formData,
+
+                      bloodGroup:
+                        b,
+                    })
                   }
                   className="peer sr-only"
                 />
@@ -296,22 +339,14 @@ function Setup() {
           </div>
         </label>
 
-        <div className="bg-card border border-border rounded-2xl p-4 text-xs text-muted-foreground">
-          Your emergency profile is stored locally on your device and used during SOS alerts and emergency assistance.
-        </div>
-
         <button
           type="submit"
-          className="w-full mt-6 bg-gradient-emergency text-emergency-foreground font-bold py-4 rounded-2xl shadow-emergency active:scale-[0.98] transition"
+          disabled={saving}
+          className="w-full mt-6 bg-gradient-emergency text-emergency-foreground font-bold py-4 rounded-2xl shadow-emergency active:scale-[0.98] transition disabled:opacity-70"
         >
-          {saved ? (
-            <span className="inline-flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5" />
-              Saved Successfully
-            </span>
-          ) : (
-            "Save & Continue"
-          )}
+          {saving
+            ? "Saving..."
+            : "Save & Continue"}
         </button>
       </form>
     </div>
