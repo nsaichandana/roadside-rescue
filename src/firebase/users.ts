@@ -1,10 +1,3 @@
-import {
-  doc,
-  setDoc,
-  getDoc,
-} from "firebase/firestore";
-import { db } from "./config";
-
 export type UserProfile = {
   fullName: string;
   phone: string;
@@ -13,31 +6,20 @@ export type UserProfile = {
   bloodGroup: string;
 };
 
-const USER_DOC_ID = "primary-user";
+const STORAGE_KEY = "roadsos-user";
 
 export async function saveUserProfile(profile: UserProfile) {
-  await setDoc(doc(db, "users", USER_DOC_ID), profile);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
 }
 
-export async function getUserProfile() {
+export async function getUserProfile(): Promise<UserProfile | null> {
   try {
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Firestore timeout")), 5000)
-    );
-
-    const firestorePromise = getDoc(doc(db, "users", USER_DOC_ID));
-
-    const snapshot = await Promise.race([
-      firestorePromise,
-      timeoutPromise,
-    ]) as any;
-
-    if (snapshot.exists()) {
-      return snapshot.data() as UserProfile;
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (data) {
+      return JSON.parse(data) as UserProfile;
     }
     return null;
-  } catch (error) {
-    console.error("getUserProfile failed:", error);
+  } catch {
     return null;
   }
 }
