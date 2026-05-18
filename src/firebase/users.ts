@@ -9,13 +9,22 @@ export type UserProfile = {
   bloodGroup: string;
 };
 
-const USER_DOC_ID = "primary-user";
 const STORAGE_KEY = "roadsos-user";
+
+function getUserId(): string {
+  let userId = localStorage.getItem("roadsos-uid");
+  if (!userId) {
+    userId = "user-" + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem("roadsos-uid", userId);
+  }
+  return userId;
+}
 
 export async function saveUserProfile(profile: UserProfile) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
   try {
-    await setDoc(doc(db, "users", USER_DOC_ID), profile);
+    const userId = getUserId();
+    await setDoc(doc(db, "users", userId), profile);
   } catch (error) {
     console.error("Firestore save failed:", error);
   }
@@ -27,10 +36,11 @@ export async function getUserProfile(): Promise<UserProfile | null> {
     return JSON.parse(local) as UserProfile;
   }
   try {
+    const userId = getUserId();
     const timeout = new Promise<null>((resolve) =>
       setTimeout(() => resolve(null), 4000)
     );
-    const firestoreGet = getDoc(doc(db, "users", USER_DOC_ID)).then(
+    const firestoreGet = getDoc(doc(db, "users", userId)).then(
       (snap) => (snap.exists() ? (snap.data() as UserProfile) : null)
     );
     return await Promise.race([firestoreGet, timeout]);
