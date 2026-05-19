@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Phone, Navigation, Star, MapPin,
-  Loader2, AlertTriangle, Clock3, ShieldAlert,
+  Loader2, AlertTriangle, Clock3, ShieldAlert, MessageSquare,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
@@ -32,13 +32,17 @@ type AnalysisData = {
   timestamp: string;
 };
 
-// Map tile filter values → EmergencyType + display label
+// All filter types from home.tsx tiles → EmergencyType + display label
 const filterTypeMap: Record<string, { type: EmergencyType; label: string; input: string }> = {
-  police:   { type: "Security Emergency",  label: "Police Help",       input: "Need police assistance" },
-  mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown", input: "Vehicle breakdown, need mechanic or towing" },
+  police:   { type: "Security Emergency",  label: "Police Help",        input: "Need police assistance" },
+  mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown",  input: "Vehicle breakdown, need mechanic or towing" },
+  fire:     { type: "Fire Emergency",      label: "Fire Emergency",     input: "Fire emergency, need fire station" },
+  pharmacy: { type: "Medical Emergency",   label: "Pharmacy",           input: "Need pharmacy or medical store nearby" },
+  fuel:     { type: "Vehicle Breakdown",   label: "Fuel Station",       input: "Need petrol or fuel station nearby" },
+  showroom: { type: "Vehicle Breakdown",   label: "Car Service Centre", input: "Need car showroom or service centre nearby" },
 };
 
-// FIX: type-specific fallback call numbers
+// Type-specific fallback call numbers
 function getCallNumber(place: NearbyPlace, emergencyType?: EmergencyType): string {
   if (place.phone) return place.phone;
   switch (emergencyType) {
@@ -47,6 +51,16 @@ function getCallNumber(place: NearbyPlace, emergencyType?: EmergencyType): strin
     case "Fire Emergency":     return "101";
     default:                   return "112";
   }
+}
+
+// Build SMS body for a given place
+function getSmsBody(place: NearbyPlace, userLat?: number, userLon?: number): string {
+  const locPart = userLat && userLon
+    ? `My location: https://maps.google.com/?q=${userLat},${userLon}`
+    : "My location: unknown";
+  return encodeURIComponent(
+    `Emergency! I need help at ${place.name} (${place.type}), ${place.distance} km away.\n${locPart}`
+  );
 }
 
 function getSeverityColor(severity: Severity) {
@@ -79,6 +93,8 @@ const typeColor: Record<string, string> = {
   mechanic:     "#eab308",
   fire_station: "#f43f5e",
   pharmacy:     "#10b981",
+  fuel:         "#f59e0b",
+  showroom:     "#6366f1",
 };
 
 function MapView({
@@ -169,13 +185,14 @@ function Nearby() {
       try {
         setLoading(true);
 
-        // --- CHECK FOR TILE FILTER FIRST ---
+        // Check for tile filter first (set by home.tsx quick action tiles)
         const tileFilter = localStorage.getItem("roadsos-nearby-filter");
         localStorage.removeItem("roadsos-nearby-filter");
 
         let parsedAnalysis: AnalysisData;
 
         if (tileFilter && filterTypeMap[tileFilter]) {
+          // Came from a home tile — build a synthetic analysis
           const mapped = filterTypeMap[tileFilter];
           parsedAnalysis = {
             input: mapped.input,
@@ -184,15 +201,25 @@ function Nearby() {
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
         } else {
+          // Came from analysis page — read saved result
           const savedAnalysis = localStorage.getItem("roadsos-analysis");
-          if (!savedAnalysis) throw new Error("No emergency analysis found. Please describe your emergency first.");
-          parsedAnalysis = JSON.parse(savedAnalysis);
-
-          if (
-            parsedAnalysis.severity === "LOW" &&
-            /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
-          ) {
-            parsedAnalysis.severity = "HIGH";
+          if (savedAnalysis) {
+            parsedAnalysis = JSON.parse(savedAnalysis);
+            // Upgrade severity if keywords suggest worse than LOW
+            if (
+              parsedAnalysis.severity === "LOW" &&
+              /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
+            ) {
+              parsedAnalysis.severity = "HIGH";
+            }
+          } else {
+            // No analysis and no filter — generic fallback, don't crash
+            parsedAnalysis = {
+              input: "General emergency assistance",
+              type: "Medical Emergency",
+              severity: "MEDIUM",
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
           }
         }
 
@@ -210,6 +237,7 @@ function Nearby() {
 
         setPlaces(nearbyPlaces);
 
+        // Cache for offline use
         if (nearbyPlaces.length > 0) {
           localStorage.setItem("roadsos-last-places", JSON.stringify(
             nearbyPlaces.map((p) => ({
@@ -238,9 +266,14 @@ function Nearby() {
     <AppShell>
       <ScreenHeader
         title="Nearby Services"
-        subtitle={analysis ? `Live emergency routing for ${analysis.type.replace("_", " ").toLowerCase()}` : "Live emergency assistance"}
+        subtitle={
+          analysis
+            ? `Live routing · ${analysis.type.replace(/_/g, " ").toLowerCase()}`
+            : "Live emergency assistance"
+        }
       />
 
+      {/* Map */}
       {userCoords ? (
         <MapView userLat={userCoords.lat} userLon={userCoords.lon} places={places} />
       ) : (
@@ -252,6 +285,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Type legend pills */}
       {!loading && places.length > 0 && (
         <div className="mx-5 mt-2 flex flex-wrap gap-2">
           {Array.from(new Set(places.map((p) => p.type))).map((t) => (
@@ -267,6 +301,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Active emergency banner */}
       {analysis && (
         <div className="px-5 mt-4">
           <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
@@ -293,6 +328,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Loading state */}
       {loading && (
         <div className="px-5 py-10 flex flex-col items-center justify-center text-center">
           <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -301,6 +337,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Error state */}
       {error && (
         <div className="px-5 mt-4">
           <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
@@ -313,6 +350,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Place cards */}
       {!loading && !error && (
         <div className="px-5 mt-4 space-y-3 pb-6">
           {places.length === 0 && (
@@ -325,8 +363,8 @@ function Nearby() {
           )}
 
           {places.map((place, index) => {
-            // FIX: smart call number — use place.phone, else type-specific fallback
             const callNumber = getCallNumber(place, analysis?.type);
+            const smsBody = getSmsBody(place, userCoords?.lat, userCoords?.lon);
             return (
               <div
                 key={place.id}
@@ -362,21 +400,29 @@ function Nearby() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 mt-4">
+                {/* 3-button action row: Call · SMS · Navigate */}
+                <div className="grid grid-cols-3 gap-2 mt-4">
                   <a
                     href={`tel:${callNumber}`}
-                    className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-sm"
+                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-xs"
                   >
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-3.5 h-3.5" />
                     Call {callNumber}
+                  </a>
+                  <a
+                    href={`sms:${callNumber}?body=${smsBody}`}
+                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold text-xs"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    SMS
                   </a>
                   <a
                     href={`https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm"
+                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-xs"
                   >
-                    <Navigation className="w-4 h-4" />
+                    <Navigation className="w-3.5 h-3.5" />
                     Navigate
                   </a>
                 </div>

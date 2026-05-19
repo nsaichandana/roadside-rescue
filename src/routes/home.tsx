@@ -14,6 +14,10 @@ import {
   Users,
   BookOpen,
   ChevronRight,
+  Flame,
+  Pill,
+  Car,
+  CircleDot,
 } from "lucide-react";
 
 import {
@@ -27,10 +31,7 @@ import {
   StatusBar,
 } from "@/components/AppShell";
 
-export const Route =
-  createFileRoute("/home")({
-    component: Home,
-  });
+export const Route = createFileRoute("/home")({ component: Home });
 
 const toneMap: Record<string, string> = {
   rose:   "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300",
@@ -39,6 +40,10 @@ const toneMap: Record<string, string> = {
   slate:  "bg-slate-100 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300",
   green:  "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300",
   violet: "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300",
+  red:    "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300",
+  teal:   "bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-300",
+  orange: "bg-orange-50 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300",
+  indigo: "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300",
 };
 
 type UserData = {
@@ -52,14 +57,13 @@ type UserData = {
   emergencyContact2Phone?: string;
 };
 
-// Each tile can set a localStorage key before navigating
 type Tile = {
   label: string;
   desc: string;
   icon: React.ElementType;
   tone: string;
   to: string;
-  preNav?: () => void; // optional action before navigating
+  preNav?: () => void;
 };
 
 function Home() {
@@ -69,48 +73,77 @@ function Home() {
   useEffect(() => {
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch {
-        console.log("Failed to load user");
-      }
+      try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
   }, []);
 
   const firstName = user?.fullName?.split(" ")[0] || "User";
 
+  // Helper: set filter key so nearby.tsx knows which type to fetch
+  function setFilter(filterKey: string) {
+    localStorage.setItem("roadsos-nearby-filter", filterKey);
+  }
+
   const tiles: Tile[] = [
     {
       to: "/emergency",
-      label: "Medical",
+      label: "Medical Emergency",
       desc: "Ambulance & first aid",
       icon: Stethoscope,
       tone: "rose",
     },
     {
       to: "/nearby",
-      label: "Vehicle Breakdown",
-      desc: "Towing, mechanic",
-      icon: Wrench,
-      tone: "amber",
-      preNav: () => {
-        localStorage.setItem("roadsos-nearby-filter", "mechanic");
-      },
+      label: "Police Help",
+      desc: "Nearest police station",
+      icon: ShieldCheck,
+      tone: "blue",
+      preNav: () => setFilter("police"),
     },
     {
       to: "/nearby",
-      label: "Police Help",
-      desc: "Nearest station",
-      icon: ShieldCheck,
-      tone: "blue",
-      preNav: () => {
-        localStorage.setItem("roadsos-nearby-filter", "police");
-      },
+      label: "Vehicle Breakdown",
+      desc: "Towing & mechanic",
+      icon: Wrench,
+      tone: "amber",
+      preNav: () => setFilter("mechanic"),
+    },
+    {
+      to: "/nearby",
+      label: "Fire Emergency",
+      desc: "Nearest fire station",
+      icon: Flame,
+      tone: "red",
+      preNav: () => setFilter("fire"),
+    },
+    {
+      to: "/nearby",
+      label: "Pharmacy",
+      desc: "Nearest medical store",
+      icon: Pill,
+      tone: "teal",
+      preNav: () => setFilter("pharmacy"),
+    },
+    {
+      to: "/nearby",
+      label: "Fuel Station",
+      desc: "Petrol / CNG nearby",
+      icon: CircleDot,
+      tone: "orange",
+      preNav: () => setFilter("fuel"),
+    },
+    {
+      to: "/nearby",
+      label: "Car Showroom",
+      desc: "Nearest service centre",
+      icon: Car,
+      tone: "indigo",
+      preNav: () => setFilter("showroom"),
     },
     {
       to: "/offline",
       label: "Offline Support",
-      desc: "Cached help",
+      desc: "Works without internet",
       icon: WifiOff,
       tone: "slate",
     },
@@ -145,6 +178,7 @@ function Home() {
       <StatusBar />
 
       <section className="px-5">
+        {/* Profile card */}
         <div className="mb-4 bg-card border border-border rounded-2xl p-4 shadow-card">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -163,7 +197,6 @@ function Home() {
                 </p>
               )}
             </div>
-
             <Link
               to="/setup"
               search={{ edit: "true" }}
@@ -174,6 +207,7 @@ function Home() {
           </div>
         </div>
 
+        {/* SOS button */}
         <Link
           to="/sos"
           className="block relative overflow-hidden rounded-3xl bg-gradient-emergency text-emergency-foreground p-6 shadow-emergency active:scale-[0.99] transition"
@@ -196,11 +230,10 @@ function Home() {
         </Link>
       </section>
 
+      {/* Quick action tiles */}
       <section className="px-5 mt-6">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            Quick Actions
-          </h3>
+          <h3 className="text-sm font-semibold text-foreground">Quick Actions</h3>
           <Link
             to="/guidance"
             className="text-xs text-primary font-semibold inline-flex items-center gap-1"
@@ -218,9 +251,7 @@ function Home() {
                 onClick={() => handleTile(tile)}
                 className="group bg-card border border-border rounded-2xl p-4 shadow-card hover:shadow-elevated transition active:scale-[0.98] text-left w-full"
               >
-                <div
-                  className={`w-11 h-11 rounded-xl flex items-center justify-center ${toneMap[tile.tone]}`}
-                >
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${toneMap[tile.tone]}`}>
                   <Icon className="w-5 h-5" />
                 </div>
                 <p className="mt-3 font-semibold text-sm">{tile.label}</p>
@@ -231,6 +262,7 @@ function Home() {
         </div>
       </section>
 
+      {/* AI assistant banner */}
       <section className="px-5 mt-6 mb-6">
         <Link
           to="/emergency"
