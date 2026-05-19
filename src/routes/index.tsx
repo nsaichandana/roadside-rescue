@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ShieldAlert, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useEffect } from "react";
 
 export const Route = createFileRoute("/")({
@@ -15,7 +15,6 @@ export const Route = createFileRoute("/")({
 function Splash() {
   const navigate = useNavigate();
 
-  // FIX: if user already completed setup, skip splash and go to home
   useEffect(() => {
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
@@ -33,13 +32,31 @@ function Splash() {
   return (
     <div className="min-h-screen bg-gradient-emergency text-emergency-foreground flex flex-col items-center justify-between px-6 py-12">
       <div className="flex-1 flex flex-col items-center justify-center text-center">
-        <div className="w-28 h-28 rounded-3xl bg-white/15 backdrop-blur-sm flex items-center justify-center mb-8 shadow-elevated animate-pulse-ring">
-          <ShieldAlert className="w-14 h-14" strokeWidth={2.2} />
+        {/* App icon — matches PWA home screen icon exactly */}
+        <div className="w-28 h-28 rounded-3xl overflow-hidden mb-8 shadow-elevated animate-pulse-ring">
+          <img
+            src="/icons/icon-512.png"
+            alt="RoadSOS"
+            className="w-full h-full object-cover"
+          />
         </div>
+
         <h1 className="text-5xl font-black tracking-tight">RoadSOS</h1>
         <p className="mt-4 text-lg text-white/90 max-w-xs leading-relaxed">
           Fast Emergency Help During Road Emergencies
         </p>
+
+        {/* Tagline pills */}
+        <div className="flex flex-wrap justify-center gap-2 mt-5">
+          {["🚑 Ambulance", "🚓 Police", "🔧 Rescue", "📍 Location"].map((tag) => (
+            <span
+              key={tag}
+              className="px-3 py-1 rounded-full bg-white/15 text-white/90 text-xs font-medium backdrop-blur-sm"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="w-full max-w-sm space-y-4">
