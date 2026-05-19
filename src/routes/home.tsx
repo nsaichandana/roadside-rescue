@@ -1,6 +1,7 @@
 import {
   createFileRoute,
   Link,
+  useNavigate,
 } from "@tanstack/react-router";
 
 import {
@@ -31,52 +32,6 @@ export const Route =
     component: Home,
   });
 
-const tiles = [
-  {
-    to: "/emergency",
-    label: "Medical",
-    desc: "Ambulance & first aid",
-    icon: Stethoscope,
-    tone: "rose",
-  },
-  {
-    to: "/nearby",
-    label: "Vehicle Breakdown",
-    desc: "Towing, mechanic",
-    icon: Wrench,
-    tone: "amber",
-  },
-  {
-    // FIX: Police Help should go to nearby with police filter, not SOS
-    to: "/nearby?type=police",
-    label: "Police Help",
-    desc: "Nearest station",
-    icon: ShieldCheck,
-    tone: "blue",
-  },
-  {
-    to: "/offline",
-    label: "Offline Support",
-    desc: "Cached help",
-    icon: WifiOff,
-    tone: "slate",
-  },
-  {
-    to: "/trip",
-    label: "Start Safe Trip",
-    desc: "Live checkpoints",
-    icon: Navigation2,
-    tone: "green",
-  },
-  {
-    to: "/contacts",
-    label: "My Contacts",
-    desc: "Trusted circle",
-    icon: Users,
-    tone: "violet",
-  },
-];
-
 const toneMap: Record<string, string> = {
   rose:   "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300",
   amber:  "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300",
@@ -97,8 +52,19 @@ type UserData = {
   emergencyContact2Phone?: string;
 };
 
+// Each tile can set a localStorage key before navigating
+type Tile = {
+  label: string;
+  desc: string;
+  icon: React.ElementType;
+  tone: string;
+  to: string;
+  preNav?: () => void; // optional action before navigating
+};
+
 function Home() {
   const [user, setUser] = useState<UserData | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const savedUser = localStorage.getItem("roadsos-user");
@@ -113,11 +79,67 @@ function Home() {
 
   const firstName = user?.fullName?.split(" ")[0] || "User";
 
+  const tiles: Tile[] = [
+    {
+      to: "/emergency",
+      label: "Medical",
+      desc: "Ambulance & first aid",
+      icon: Stethoscope,
+      tone: "rose",
+    },
+    {
+      to: "/nearby",
+      label: "Vehicle Breakdown",
+      desc: "Towing, mechanic",
+      icon: Wrench,
+      tone: "amber",
+      preNav: () => {
+        localStorage.setItem("roadsos-nearby-filter", "mechanic");
+      },
+    },
+    {
+      to: "/nearby",
+      label: "Police Help",
+      desc: "Nearest station",
+      icon: ShieldCheck,
+      tone: "blue",
+      preNav: () => {
+        localStorage.setItem("roadsos-nearby-filter", "police");
+      },
+    },
+    {
+      to: "/offline",
+      label: "Offline Support",
+      desc: "Cached help",
+      icon: WifiOff,
+      tone: "slate",
+    },
+    {
+      to: "/trip",
+      label: "Start Safe Trip",
+      desc: "Live checkpoints",
+      icon: Navigation2,
+      tone: "green",
+    },
+    {
+      to: "/contacts",
+      label: "My Contacts",
+      desc: "Trusted circle",
+      icon: Users,
+      tone: "violet",
+    },
+  ];
+
+  function handleTile(tile: Tile) {
+    if (tile.preNav) tile.preNav();
+    navigate({ to: tile.to });
+  }
+
   return (
     <AppShell>
       <ScreenHeader
         title={`Hi, ${firstName}`}
-        subtitle="Stay safe — help is one tap away"
+        subtitle="Stay safe – help is one tap away"
       />
 
       <StatusBar />
@@ -142,7 +164,6 @@ function Home() {
               )}
             </div>
 
-            {/* FIX: pass edit=true so setup page knows to go back to /home */}
             <Link
               to="/setup"
               search={{ edit: "true" }}
@@ -189,21 +210,24 @@ function Home() {
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          {tiles.map(({ to, label, desc, icon: Icon, tone }) => (
-            <Link
-              key={to}
-              to={to}
-              className="group bg-card border border-border rounded-2xl p-4 shadow-card hover:shadow-elevated transition active:scale-[0.98]"
-            >
-              <div
-                className={`w-11 h-11 rounded-xl flex items-center justify-center ${toneMap[tone]}`}
+          {tiles.map((tile) => {
+            const Icon = tile.icon;
+            return (
+              <button
+                key={tile.label}
+                onClick={() => handleTile(tile)}
+                className="group bg-card border border-border rounded-2xl p-4 shadow-card hover:shadow-elevated transition active:scale-[0.98] text-left w-full"
               >
-                <Icon className="w-5 h-5" />
-              </div>
-              <p className="mt-3 font-semibold text-sm">{label}</p>
-              <p className="text-xs text-muted-foreground">{desc}</p>
-            </Link>
-          ))}
+                <div
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center ${toneMap[tile.tone]}`}
+                >
+                  <Icon className="w-5 h-5" />
+                </div>
+                <p className="mt-3 font-semibold text-sm">{tile.label}</p>
+                <p className="text-xs text-muted-foreground">{tile.desc}</p>
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -218,7 +242,7 @@ function Home() {
             </p>
             <p className="font-semibold mt-0.5">Describe your emergency</p>
             <p className="text-xs text-muted-foreground">
-              Voice or text — get instant guidance
+              Voice or text – get instant guidance
             </p>
           </div>
           <ChevronRight className="w-5 h-5 text-muted-foreground" />

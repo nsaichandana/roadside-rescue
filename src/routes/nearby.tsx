@@ -11,7 +11,6 @@ import { fetchNearbyPlaces, EmergencyType, NearbyPlace } from "@/services/places
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Fix broken default marker icons with bundlers
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
@@ -31,6 +30,12 @@ type AnalysisData = {
   type: EmergencyType;
   severity: Severity;
   timestamp: string;
+};
+
+// Map tile filter values → EmergencyType + display label
+const filterTypeMap: Record<string, { type: EmergencyType; label: string; input: string }> = {
+  police:   { type: "Security Emergency",  label: "Police Help",       input: "Need police assistance" },
+  mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown", input: "Vehicle breakdown, need mechanic or towing" },
 };
 
 function getSeverityColor(severity: Severity) {
@@ -86,12 +91,10 @@ function MapView({
     });
     mapInstance.current = map;
 
-    // Free OSM tiles — no API key needed
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
     }).addTo(map);
 
-    // User dot — blue pulsing
     const userIcon = L.divIcon({
       className: "",
       html: `<div style="
@@ -106,7 +109,6 @@ function MapView({
       .addTo(map)
       .bindPopup("<b>You are here</b>");
 
-    // Place markers with color by type
     places.forEach((p, i) => {
       const color = typeColor[p.type] ?? "#6366f1";
       L.marker([p.latitude, p.longitude], { icon: makeIcon(color) })
@@ -121,7 +123,6 @@ function MapView({
         `);
     });
 
-    // Fit all markers in view
     if (places.length > 0) {
       const bounds = L.latLngBounds([
         [userLat, userLon],
@@ -157,18 +158,38 @@ function Nearby() {
       try {
         setLoading(true);
 
-        const savedAnalysis = localStorage.getItem("roadsos-analysis");
-        if (!savedAnalysis) throw new Error("No emergency analysis found.");
+        // --- CHECK FOR TILE FILTER FIRST ---
+        // Home page tiles (Police, Vehicle Breakdown) set this key before navigating
+        const tileFilter = localStorage.getItem("roadsos-nearby-filter");
+        localStorage.removeItem("roadsos-nearby-filter"); // consume immediately
 
-        const parsedAnalysis: AnalysisData = JSON.parse(savedAnalysis);
-        setAnalysis(parsedAnalysis);
+        let parsedAnalysis: AnalysisData;
 
-        if (
-          parsedAnalysis.severity === "LOW" &&
-          /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
-        ) {
-          parsedAnalysis.severity = "HIGH";
+        if (tileFilter && filterTypeMap[tileFilter]) {
+          // Came from a home tile — build a synthetic analysis object
+          const mapped = filterTypeMap[tileFilter];
+          parsedAnalysis = {
+            input: mapped.input,
+            type: mapped.type,
+            severity: "MEDIUM",
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+        } else {
+          // Came from AI emergency flow — read saved analysis as before
+          const savedAnalysis = localStorage.getItem("roadsos-analysis");
+          if (!savedAnalysis) throw new Error("No emergency analysis found. Please describe your emergency first.");
+          parsedAnalysis = JSON.parse(savedAnalysis);
+
+          // Auto-correct severity if keywords suggest HIGH
+          if (
+            parsedAnalysis.severity === "LOW" &&
+            /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
+          ) {
+            parsedAnalysis.severity = "HIGH";
+          }
         }
+
+        setAnalysis(parsedAnalysis);
 
         const location = await getUserLocation();
         setUserCoords({ lat: location.latitude, lon: location.longitude });
@@ -207,10 +228,9 @@ function Nearby() {
     <AppShell>
       <ScreenHeader
         title="Nearby Services"
-        subtitle={analysis ? `Live emergency routing for ${analysis.type}` : "Live emergency assistance"}
+        subtitle={analysis ? `Live emergency routing for ${analysis.type.replace("_", " ").toLowerCase()}` : "Live emergency assistance"}
       />
 
-      {/* Real Leaflet map */}
       {userCoords ? (
         <MapView userLat={userCoords.lat} userLon={userCoords.lon} places={places} />
       ) : (
@@ -222,7 +242,6 @@ function Nearby() {
         </div>
       )}
 
-      {/* Legend */}
       {!loading && places.length > 0 && (
         <div className="mx-5 mt-2 flex flex-wrap gap-2">
           {Array.from(new Set(places.map((p) => p.type))).map((t) => (
@@ -238,7 +257,6 @@ function Nearby() {
         </div>
       )}
 
-      {/* Active emergency card */}
       {analysis && (
         <div className="px-5 mt-4">
           <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
@@ -248,7 +266,7 @@ function Nearby() {
                   <ShieldAlert className="w-4 h-4 text-primary" />
                   <p className="font-semibold text-sm">Active Emergency</p>
                 </div>
-                <p className="mt-2 font-bold">{analysis.type}</p>
+                <p className="mt-2 font-bold capitalize">{analysis.type.replace(/_/g, " ").toLowerCase()}</p>
                 <p className="text-xs text-muted-foreground mt-1">{analysis.input}</p>
               </div>
               <div className="text-right">
@@ -269,7 +287,7 @@ function Nearby() {
         <div className="px-5 py-10 flex flex-col items-center justify-center text-center">
           <Loader2 className="w-10 h-10 animate-spin text-primary" />
           <p className="mt-4 text-sm font-medium">Finding nearby emergency services...</p>
-          <p className="text-xs text-muted-foreground mt-2">AI-powered emergency routing in progress</p>
+          <p className="text-xs text-muted-foreground mt-2">GPS-powered emergency routing in progress</p>
         </div>
       )}
 
@@ -289,7 +307,7 @@ function Nearby() {
         <div className="px-5 mt-4 space-y-3 pb-6">
           {places.length === 0 && (
             <div className="bg-card border border-border rounded-2xl p-6 text-center">
-              <p className="font-semibold">No nearby emergency services found</p>
+              <p className="font-semibold">No nearby services found</p>
               <p className="text-xs text-muted-foreground mt-1">
                 Try expanding search coverage or moving to a nearby populated area.
               </p>
