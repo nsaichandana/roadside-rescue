@@ -63,14 +63,17 @@ function Trip() {
       async (pos) => {
         const { latitude: lat, longitude: lng } = pos.coords;
         const address = await reverseGeocode(lat, lng);
-        setLocation({ lat, lng, address, updatedAt: formatTime(new Date()) });
+        const locState = { lat, lng, address, updatedAt: formatTime(new Date()) };
+        setLocation(locState);
+        // FIX: save label immediately so offline.tsx has it even before a trip starts
+        localStorage.setItem("roadsos-last-location-label", address);
+        localStorage.setItem("roadsos-last-location", JSON.stringify(locState));
       },
       () => setLocationError("Location permission denied."),
       { enableHighAccuracy: true }
     );
   }, []);
 
-  // Start/stop trip
   const handleToggle = async () => {
     if (active) {
       // End trip
@@ -82,7 +85,6 @@ function Trip() {
       checkpointIntervalRef.current = null;
       elapsedIntervalRef.current = null;
 
-      // Mark destination done
       setCheckpoints((prev) =>
         prev.map((c, i) =>
           i === prev.length - 1 ? { ...c, done: true, time: formatTime(new Date()) } : c
@@ -95,7 +97,6 @@ function Trip() {
       setStartTime(now);
       setElapsed("0 min");
 
-      // Get current location for start
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude: lat, longitude: lng } = pos.coords;
@@ -128,12 +129,11 @@ function Trip() {
         async (pos) => {
           const { latitude: lat, longitude: lng } = pos.coords;
           const address = await reverseGeocode(lat, lng);
-          setLocation({ lat, lng, address, updatedAt: formatTime(new Date()) });
-          // Cache for offline
-          localStorage.setItem(
-            "roadsos-last-location",
-            JSON.stringify({ lat, lng, address, updatedAt: formatTime(new Date()) })
-          );
+          const locState = { lat, lng, address, updatedAt: formatTime(new Date()) };
+          setLocation(locState);
+          // FIX: write both the full object and the human-readable label
+          localStorage.setItem("roadsos-last-location", JSON.stringify(locState));
+          localStorage.setItem("roadsos-last-location-label", address);
         },
         () => {},
         { enableHighAccuracy: true, maximumAge: 15000 }
@@ -157,7 +157,7 @@ function Trip() {
           );
           cpIndex++;
         });
-      }, 5 * 60 * 1000); // every 5 min
+      }, 5 * 60 * 1000);
       checkpointIntervalRef.current = cpInterval;
 
       // Elapsed timer
@@ -169,7 +169,6 @@ function Trip() {
     }
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
@@ -189,7 +188,6 @@ function Trip() {
       <ScreenHeader title="Trip Safety Mode" subtitle="Real-time location tracking" />
 
       <div className="px-5 space-y-4">
-        {/* Trip Status Card */}
         <div
           className={`rounded-3xl p-6 shadow-card border ${
             active
@@ -235,7 +233,6 @@ function Trip() {
           </button>
         </div>
 
-        {/* Location Error */}
         {locationError && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
@@ -243,7 +240,6 @@ function Trip() {
           </div>
         )}
 
-        {/* Live Location Card */}
         <button
           onClick={openInMaps}
           className="w-full bg-card border border-border rounded-2xl p-4 shadow-card text-left"
@@ -278,7 +274,6 @@ function Trip() {
           )}
         </button>
 
-        {/* Checkpoints */}
         {checkpoints.length > 0 && (
           <div>
             <p className="text-sm font-semibold mb-3">Checkpoints</p>
@@ -306,7 +301,6 @@ function Trip() {
           </div>
         )}
 
-        {/* No trip started yet — placeholder */}
         {!active && checkpoints.length === 0 && (
           <div className="bg-card border border-border rounded-2xl p-5 text-center shadow-card">
             <Clock className="w-10 h-10 text-muted-foreground mx-auto mb-3" />

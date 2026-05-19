@@ -65,7 +65,6 @@ function getServices(emergencyType: EmergencyType): Service[] {
   }
 }
 
-// Map Gemini severity string → our Severity type
 function normalizeSeverity(raw: string): Severity {
   const s = raw?.toLowerCase() || "";
   if (s === "critical" || s === "high") return "HIGH";
@@ -73,7 +72,6 @@ function normalizeSeverity(raw: string): Severity {
   return "LOW";
 }
 
-// Valid EmergencyType values
 const VALID_TYPES: EmergencyType[] = [
   "Medical Emergency",
   "Vehicle Breakdown",
@@ -104,6 +102,7 @@ function Analysis() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [aiResponse, setAiResponse] = useState<string>("");
   const [loadingAI, setLoadingAI] = useState(false);
+  const [aiDone, setAiDone] = useState(false); // FIX: track when AI + storage update is complete
   const [dispatch, setDispatch] = useState<DispatchSummary | null>(null);
   const peakWarning = getPeakHourWarning();
 
@@ -138,7 +137,7 @@ function Analysis() {
 
         setAiResponse(response);
 
-        // --- KEY FIX: update roadsos-analysis type from Gemini if it returned one ---
+        // Update roadsos-analysis with Gemini's corrected type before allowing navigation
         const parsedAI = parseAIResponse(response);
         if (parsedAI?.emergency_type && VALID_TYPES.includes(parsedAI.emergency_type as EmergencyType)) {
           const aiType = parsedAI.emergency_type as EmergencyType;
@@ -152,7 +151,6 @@ function Analysis() {
           setAnalysis(updatedAnalysis);
           localStorage.setItem("roadsos-analysis", JSON.stringify(updatedAnalysis));
 
-          // Also update dispatch with corrected type
           const updatedDispatch = generateDispatchSummary(parsed.input, aiType);
           setDispatch(updatedDispatch);
         }
@@ -161,14 +159,15 @@ function Analysis() {
         console.error("Failed to load analysis", error);
       } finally {
         setLoadingAI(false);
+        setAiDone(true); // FIX: only enable "View Nearby" after analysis is saved
       }
     }
     loadAnalysis();
   }, []);
 
+  // FIX: only navigate once AI analysis is saved to localStorage
   function handleViewNearby() {
-    // roadsos-analysis is already up to date (updated above with Gemini type)
-    // Just navigate — nearby.tsx will read it
+    if (!aiDone) return;
     navigate({ to: "/nearby" });
   }
 
@@ -200,7 +199,6 @@ function Analysis() {
 
       <section className="px-5 space-y-4">
 
-        {/* Peak Hour Warning */}
         {peakWarning && (
           <div className="bg-warning/15 border border-warning/30 rounded-2xl p-3 flex items-start gap-3">
             <AlertTriangle className="w-4 h-4 text-warning-foreground mt-0.5 flex-shrink-0" />
@@ -208,7 +206,6 @@ function Analysis() {
           </div>
         )}
 
-        {/* Two-Wheeler Protocol Banner */}
         {dispatch?.twoWheelerProtocol && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
             <Bike className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
@@ -222,7 +219,6 @@ function Analysis() {
           </div>
         )}
 
-        {/* RoadSOS Dispatch Summary Card */}
         {dispatch && (
           <div className="bg-card border-2 border-primary rounded-2xl p-5 shadow-card">
             <p className="text-xs uppercase tracking-wider font-bold text-primary mb-3">
@@ -261,7 +257,6 @@ function Analysis() {
           </div>
         )}
 
-        {/* Gemini AI Triage Card */}
         <div className="bg-card border border-border rounded-2xl p-5 shadow-card">
           <p className="text-xs uppercase tracking-wider text-primary font-semibold mb-3">
             Gemini AI Emergency Intelligence
@@ -313,7 +308,6 @@ function Analysis() {
           ) : null}
         </div>
 
-        {/* Recommended Services */}
         <div>
           <p className="text-sm font-semibold mb-3">Recommended Services</p>
           <div className="grid grid-cols-3 gap-3">
@@ -332,7 +326,6 @@ function Analysis() {
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3 pt-2">
           <button
             onClick={() => navigate({ to: "/sos" })}
@@ -340,12 +333,18 @@ function Analysis() {
           >
             Send SOS
           </button>
+          {/* FIX: disabled until AI analysis is saved, prevents stale type reaching nearby */}
           <button
             onClick={handleViewNearby}
-            className="inline-flex items-center justify-center gap-2 bg-gradient-emergency text-emergency-foreground rounded-2xl py-4 font-bold text-sm shadow-emergency"
+            disabled={!aiDone}
+            className={`inline-flex items-center justify-center gap-2 rounded-2xl py-4 font-bold text-sm transition ${
+              aiDone
+                ? "bg-gradient-emergency text-emergency-foreground shadow-emergency"
+                : "bg-muted text-muted-foreground cursor-not-allowed"
+            }`}
           >
             <MapPin className="w-4 h-4" />
-            {loadingAI ? "Loading..." : "View Nearby"}
+            {loadingAI ? "Analyzing..." : "View Nearby"}
           </button>
         </div>
 

@@ -38,6 +38,17 @@ const filterTypeMap: Record<string, { type: EmergencyType; label: string; input:
   mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown", input: "Vehicle breakdown, need mechanic or towing" },
 };
 
+// FIX: type-specific fallback call numbers
+function getCallNumber(place: NearbyPlace, emergencyType?: EmergencyType): string {
+  if (place.phone) return place.phone;
+  switch (emergencyType) {
+    case "Security Emergency": return "100";
+    case "Medical Emergency":  return "108";
+    case "Fire Emergency":     return "101";
+    default:                   return "112";
+  }
+}
+
 function getSeverityColor(severity: Severity) {
   switch (severity) {
     case "HIGH":   return "text-destructive";
@@ -159,14 +170,12 @@ function Nearby() {
         setLoading(true);
 
         // --- CHECK FOR TILE FILTER FIRST ---
-        // Home page tiles (Police, Vehicle Breakdown) set this key before navigating
         const tileFilter = localStorage.getItem("roadsos-nearby-filter");
-        localStorage.removeItem("roadsos-nearby-filter"); // consume immediately
+        localStorage.removeItem("roadsos-nearby-filter");
 
         let parsedAnalysis: AnalysisData;
 
         if (tileFilter && filterTypeMap[tileFilter]) {
-          // Came from a home tile — build a synthetic analysis object
           const mapped = filterTypeMap[tileFilter];
           parsedAnalysis = {
             input: mapped.input,
@@ -175,12 +184,10 @@ function Nearby() {
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
         } else {
-          // Came from AI emergency flow — read saved analysis as before
           const savedAnalysis = localStorage.getItem("roadsos-analysis");
           if (!savedAnalysis) throw new Error("No emergency analysis found. Please describe your emergency first.");
           parsedAnalysis = JSON.parse(savedAnalysis);
 
-          // Auto-correct severity if keywords suggest HIGH
           if (
             parsedAnalysis.severity === "LOW" &&
             /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
@@ -197,7 +204,8 @@ function Nearby() {
         const nearbyPlaces = await fetchNearbyPlaces(
           location.latitude,
           location.longitude,
-          parsedAnalysis.type
+          parsedAnalysis.type,
+          parsedAnalysis.input,
         );
 
         setPlaces(nearbyPlaces);
@@ -205,9 +213,11 @@ function Nearby() {
         if (nearbyPlaces.length > 0) {
           localStorage.setItem("roadsos-last-places", JSON.stringify(
             nearbyPlaces.map((p) => ({
-              name: p.name, type: p.type,
+              name: p.name,
+              type: p.type,
               distance: `${p.distance} km`,
-              lat: p.latitude, lon: p.longitude,
+              lat: p.latitude,
+              lon: p.longitude,
             }))
           ));
           localStorage.setItem(
@@ -314,61 +324,65 @@ function Nearby() {
             </div>
           )}
 
-          {places.map((place, index) => (
-            <div
-              key={place.id}
-              className={`bg-card border rounded-2xl p-4 shadow-card ${
-                index === 0 ? "border-primary/40 ring-1 ring-primary/20" : "border-border"
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className="w-3 h-3 rounded-full mt-1.5 flex-shrink-0"
-                  style={{ background: typeColor[place.type] ?? "#6366f1" }}
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-semibold">{place.name}</p>
-                    {index === 0 && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
-                        <Star className="w-2.5 h-2.5 fill-current" />
-                        Best Match
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5 capitalize">
-                    {place.type.replace("_", " ")}
-                  </p>
-                  <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
-                    <span className="font-medium">{place.distance} km away</span>
-                    <span className="text-muted-foreground">•</span>
-                    <span className="text-success font-medium">{place.eta} ETA</span>
-                    <span className="text-muted-foreground">•</span>
-                    <span className="text-primary font-medium">GPS Matched</span>
+          {places.map((place, index) => {
+            // FIX: smart call number — use place.phone, else type-specific fallback
+            const callNumber = getCallNumber(place, analysis?.type);
+            return (
+              <div
+                key={place.id}
+                className={`bg-card border rounded-2xl p-4 shadow-card ${
+                  index === 0 ? "border-primary/40 ring-1 ring-primary/20" : "border-border"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-3 h-3 rounded-full mt-1.5 flex-shrink-0"
+                    style={{ background: typeColor[place.type] ?? "#6366f1" }}
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold">{place.name}</p>
+                      {index === 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
+                          <Star className="w-2.5 h-2.5 fill-current" />
+                          Best Match
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 capitalize">
+                      {place.type.replace("_", " ")}
+                    </p>
+                    <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+                      <span className="font-medium">{place.distance} km away</span>
+                      <span className="text-muted-foreground">•</span>
+                      <span className="text-success font-medium">{place.eta} ETA</span>
+                      <span className="text-muted-foreground">•</span>
+                      <span className="text-primary font-medium">GPS Matched</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-4">
-                <a
-                  href="tel:112"
-                  className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-sm"
-                >
-                  <Phone className="w-4 h-4" />
-                  Call
-                </a>
-                <a
-                  href={`https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm"
-                >
-                  <Navigation className="w-4 h-4" />
-                  Navigate
-                </a>
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <a
+                    href={`tel:${callNumber}`}
+                    className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-sm"
+                  >
+                    <Phone className="w-4 h-4" />
+                    Call {callNumber}
+                  </a>
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm"
+                  >
+                    <Navigation className="w-4 h-4" />
+                    Navigate
+                  </a>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </AppShell>

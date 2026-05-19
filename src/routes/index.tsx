@@ -1,5 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ShieldAlert, ChevronRight } from "lucide-react";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/")({
   component: Splash,
@@ -12,6 +13,23 @@ export const Route = createFileRoute("/")({
 });
 
 function Splash() {
+  const navigate = useNavigate();
+
+  // FIX: if user already completed setup, skip splash and go to home
+  useEffect(() => {
+    const savedUser = localStorage.getItem("roadsos-user");
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser);
+        if (u.fullName && u.phone) {
+          navigate({ to: "/home" });
+        }
+      } catch {
+        // ignore parse error, show splash normally
+      }
+    }
+  }, [navigate]);
+
   return (
     <div className="min-h-screen bg-gradient-emergency text-emergency-foreground flex flex-col items-center justify-between px-6 py-12">
       <div className="flex-1 flex flex-col items-center justify-center text-center">
