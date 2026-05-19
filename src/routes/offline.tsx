@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import {
   WifiOff,
@@ -8,21 +8,14 @@ import {
   BookOpen,
   ShieldCheck,
   CheckCircle2,
+  Navigation,
 } from "lucide-react";
 
-import {
-  useEffect,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 
-import {
-  AppShell,
-  ScreenHeader,
-} from "@/components/AppShell";
+import { AppShell, ScreenHeader } from "@/components/AppShell";
 
-export const Route = createFileRoute("/offline")({
-  component: Offline,
-});
+export const Route = createFileRoute("/offline")({ component: Offline });
 
 type Contact = {
   id: string;
@@ -32,47 +25,95 @@ type Contact = {
   priority: string;
 };
 
-const cachedServices = [
-  "City Trauma Center",
-  "RapidCare Ambulance",
-  "Raj Tyre Works",
-  "Central Police Station",
-];
+// Shape written by nearby.tsx after every successful OSM fetch
+type CachedPlace = {
+  name: string;
+  type: string; // "hospital" | "ambulance" | "police" | "mechanic"
+  distance?: string;
+  address?: string;
+  lat?: number;
+  lon?: number;
+};
+
+// Also read the user profile emergency contacts as a fallback
+type UserProfile = {
+  fullName?: string;
+  emergencyContact1Name?: string;
+  emergencyContact1Phone?: string;
+  emergencyContact2Name?: string;
+  emergencyContact2Phone?: string;
+};
+
+const typeLabel: Record<string, string> = {
+  hospital: "🏥 Hospital",
+  ambulance: "🚑 Ambulance",
+  police: "👮 Police",
+  mechanic: "🔧 Mechanic",
+};
 
 function Offline() {
+  const navigate = useNavigate();
   const [contacts, setContacts] = useState<Contact[]>([]);
-
-  const [lastSync, setLastSync] =
-    useState("");
+  const [cachedPlaces, setCachedPlaces] = useState<CachedPlace[]>([]);
+  const [profileContacts, setProfileContacts] = useState<
+    { name: string; phone: string; label: string }[]
+  >([]);
+  const [lastSync, setLastSync] = useState("Never");
+  const [lastLocation, setLastLocation] = useState<string | null>(null);
 
   useEffect(() => {
-    const savedContacts =
-      localStorage.getItem(
-        "roadsos-contacts"
-      );
-
+    // Load contacts from contacts page
+    const savedContacts = localStorage.getItem("roadsos-contacts");
     if (savedContacts) {
-      try {
-        setContacts(
-          JSON.parse(savedContacts)
-        );
-      } catch (error) {
-        console.error(
-          "Failed to load offline contacts:",
-          error
-        );
-      }
+      try { setContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
     }
 
-    const now = new Date();
+    // Load emergency contacts from user profile
+    const savedUser = localStorage.getItem("roadsos-user");
+    if (savedUser) {
+      try {
+        const user: UserProfile = JSON.parse(savedUser);
+        const pc: { name: string; phone: string; label: string }[] = [];
+        if (user.emergencyContact1Name && user.emergencyContact1Phone) {
+          pc.push({ name: user.emergencyContact1Name, phone: user.emergencyContact1Phone, label: "Primary" });
+        }
+        if (user.emergencyContact2Name && user.emergencyContact2Phone) {
+          pc.push({ name: user.emergencyContact2Name, phone: user.emergencyContact2Phone, label: "Secondary" });
+        }
+        setProfileContacts(pc);
+      } catch { /* ignore */ }
+    }
 
-    setLastSync(
-      now.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    );
+    // Load real cached nearby places written by nearby.tsx
+    const savedPlaces = localStorage.getItem("roadsos-last-places");
+    if (savedPlaces) {
+      try {
+        const parsed = JSON.parse(savedPlaces);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCachedPlaces(parsed);
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Load last sync time
+    const syncTime = localStorage.getItem("roadsos-last-sync");
+    if (syncTime) setLastSync(syncTime);
+
+    // Load last known location label
+    const locLabel = localStorage.getItem("roadsos-last-location-label");
+    if (locLabel) setLastLocation(locLabel);
+
+    // If no sync time recorded, set now as a fallback
+    if (!syncTime) {
+      const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setLastSync(now);
+    }
   }, []);
+
+  const allContacts = [
+    ...profileContacts.map((c) => ({ ...c, id: c.phone, relation: c.label })),
+    ...contacts.map((c) => ({ ...c, label: c.relation })),
+  ];
 
   return (
     <AppShell>
@@ -82,34 +123,31 @@ function Offline() {
       />
 
       <div className="px-5 space-y-4">
+        {/* Status banner */}
         <div className="bg-warning/15 border border-warning/30 rounded-2xl p-4 flex items-center gap-3">
-          <WifiOff className="w-5 h-5 text-warning-foreground" />
-
+          <WifiOff className="w-5 h-5 text-warning-foreground flex-shrink-0" />
           <div className="flex-1">
-            <p className="font-semibold text-sm">
-              Offline emergency mode ready
-            </p>
-
+            <p className="font-semibold text-sm">Offline emergency mode ready</p>
             <p className="text-xs text-muted-foreground">
-              Last synced at {lastSync}
+              Last synced: {lastSync}
+              {lastLocation ? ` • ${lastLocation}` : ""}
             </p>
           </div>
-
-          <button className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card text-xs font-semibold border border-border">
+          <button
+            onClick={() => navigate({ to: "/nearby" })}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card text-xs font-semibold border border-border"
+          >
             <RefreshCw className="w-3.5 h-3.5" />
-            Retry
+            Sync
           </button>
         </div>
 
+        {/* Location backup */}
         <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
           <div className="flex items-start gap-3">
             <ShieldCheck className="w-5 h-5 text-primary mt-0.5" />
-
             <div>
-              <p className="font-semibold text-sm">
-                Last-known-location backup enabled
-              </p>
-
+              <p className="font-semibold text-sm">Last-known-location backup enabled</p>
               <p className="text-xs text-muted-foreground mt-1">
                 RoadSOS can still share your last saved location if internet fails during emergencies.
               </p>
@@ -117,32 +155,15 @@ function Offline() {
           </div>
         </div>
 
+        {/* National numbers */}
         <div>
-          <p className="text-sm font-semibold mb-3">
-            National Emergency Numbers
-          </p>
-
+          <p className="text-sm font-semibold mb-3">National Emergency Numbers</p>
           <div className="grid grid-cols-2 gap-3">
             {[
-              {
-                l: "All-in-one",
-                n: "112",
-              },
-
-              {
-                l: "Police",
-                n: "100",
-              },
-
-              {
-                l: "Ambulance",
-                n: "108",
-              },
-
-              {
-                l: "Fire",
-                n: "101",
-              },
+              { l: "All-in-one", n: "112" },
+              { l: "Police",     n: "100" },
+              { l: "Ambulance",  n: "108" },
+              { l: "Fire",       n: "101" },
             ].map((e) => (
               <a
                 key={e.n}
@@ -150,15 +171,9 @@ function Offline() {
                 className="bg-card border border-border rounded-2xl p-4 shadow-card flex items-center justify-between"
               >
                 <div>
-                  <p className="text-xs text-muted-foreground">
-                    {e.l}
-                  </p>
-
-                  <p className="text-2xl font-black text-primary">
-                    {e.n}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{e.l}</p>
+                  <p className="text-2xl font-black text-primary">{e.n}</p>
                 </div>
-
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
                   <Phone className="w-4 h-4" />
                 </div>
@@ -167,102 +182,122 @@ function Offline() {
           </div>
         </div>
 
+        {/* Emergency contacts */}
         <div>
-          <p className="text-sm font-semibold mb-3">
-            Cached Emergency Contacts
-          </p>
-
+          <p className="text-sm font-semibold mb-3">Cached Emergency Contacts</p>
           <div className="bg-card border border-border rounded-2xl shadow-card divide-y divide-border">
-            {contacts.length === 0 ? (
+            {allContacts.length === 0 ? (
               <div className="p-5 text-center">
-                <p className="font-semibold">
-                  No cached contacts
-                </p>
-
+                <p className="font-semibold">No contacts saved</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Add contacts before going offline
+                  Add emergency contacts in your profile
                 </p>
+                <button
+                  onClick={() => navigate({ to: "/setup", search: { edit: "true" } })}
+                  className="mt-3 text-xs text-primary font-semibold"
+                >
+                  Update Profile →
+                </button>
               </div>
             ) : (
-              contacts.map((c) => (
-                <div
+              allContacts.map((c) => (
+                <a
                   key={c.id}
+                  href={`tel:${c.phone}`}
                   className="flex items-center gap-3 p-4"
                 >
                   <div className="w-10 h-10 rounded-full bg-accent text-accent-foreground font-bold flex items-center justify-center">
-                    {c.name[0]}
+                    {c.name[0]?.toUpperCase()}
                   </div>
-
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {c.name}
-                    </p>
-
-                    <p className="text-xs text-muted-foreground">
-                      {c.phone}
-                    </p>
+                    <p className="text-sm font-medium truncate">{c.name}</p>
+                    <p className="text-xs text-muted-foreground">{c.phone} · {c.relation}</p>
                   </div>
-
                   <Phone className="w-4 h-4 text-muted-foreground" />
-                </div>
+                </a>
               ))
             )}
           </div>
         </div>
 
+        {/* Cached nearby services — REAL data from localStorage */}
         <div>
-          <p className="text-sm font-semibold mb-3">
-            Cached Nearby Services
-          </p>
+          <p className="text-sm font-semibold mb-3">Cached Nearby Services</p>
 
-          <div className="space-y-2">
-            {cachedServices.map((s) => (
-              <div
-                key={s}
-                className="flex items-center gap-3 bg-card border border-border rounded-2xl p-3 shadow-card"
+          {cachedPlaces.length === 0 ? (
+            <div className="bg-card border border-border rounded-2xl p-5 text-center shadow-card">
+              <MapPin className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+              <p className="font-semibold text-sm">No cached services yet</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Visit Nearby once while online to cache services for offline use
+              </p>
+              <button
+                onClick={() => navigate({ to: "/nearby" })}
+                className="mt-3 text-xs text-primary font-semibold"
               >
-                <MapPin className="w-4 h-4 text-primary" />
-
-                <p className="flex-1 text-sm font-medium">
-                  {s}
-                </p>
-
-                <span className="inline-flex items-center gap-1 text-xs text-success font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Cached
-                </span>
-              </div>
-            ))}
-          </div>
+                Go to Nearby →
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {cachedPlaces.map((s, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 bg-card border border-border rounded-2xl p-3 shadow-card"
+                >
+                  <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{s.name}</p>
+                    {s.type && (
+                      <p className="text-xs text-muted-foreground">
+                        {typeLabel[s.type] ?? s.type}
+                        {s.distance ? ` · ${s.distance}` : ""}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {s.lat && s.lon && (
+                      <a
+                        href={`https://www.google.com/maps?q=${s.lat},${s.lon}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                    <span className="inline-flex items-center gap-1 text-xs text-success font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Cached
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
+        {/* Offline guidance */}
         <div className="bg-card border border-border rounded-2xl p-4 shadow-card flex items-start gap-3">
           <BookOpen className="w-5 h-5 text-primary mt-0.5" />
-
           <div>
-            <p className="font-semibold text-sm">
-              Offline guidance available
-            </p>
-
+            <p className="font-semibold text-sm">Offline guidance available</p>
             <p className="text-xs text-muted-foreground mt-1">
               First-aid, accident response, bleeding control, and vehicle safety guidance work even without internet.
             </p>
           </div>
         </div>
 
+        {/* SOS retry queue */}
         <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
           <p className="text-xs uppercase tracking-wider font-bold text-primary">
             Offline Emergency Queue
           </p>
-
           <div className="mt-3 flex items-start gap-3">
             <RefreshCw className="w-5 h-5 text-warning mt-0.5" />
-
             <div>
-              <p className="font-semibold text-sm">
-                SOS retry queue enabled
-              </p>
-
+              <p className="font-semibold text-sm">SOS retry queue enabled</p>
               <p className="text-xs text-muted-foreground mt-1">
                 Emergency alerts will automatically retry once internet connectivity returns.
               </p>

@@ -1,22 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  Siren, Share2, MapPin, Check, Phone, Clock3,
+  Siren, MapPin, Check, Phone, Clock3,
   ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 
-export const Route = createFileRoute("/sos")({
-  component: SOS,
-});
+export const Route = createFileRoute("/sos")({ component: SOS });
 
+// FIX: updated to match new setup.tsx field names
 type UserData = {
   fullName: string;
   phone: string;
-  emergency1: string;
-  emergency2: string;
   bloodGroup: string;
+  medicalConditions?: string;
+  emergencyContact1Name?: string;
+  emergencyContact1Phone?: string;
+  emergencyContact2Name?: string;
+  emergencyContact2Phone?: string;
 };
 
 type LocationData = {
@@ -25,23 +27,19 @@ type LocationData = {
 };
 
 function SOS() {
-  const [sent, setSent] = useState(false);
-  const [holding, setHolding] = useState(false);
-  const [time, setTime] = useState("");
+  const [sent, setSent]                   = useState(false);
+  const [holding, setHolding]             = useState(false);
+  const [time, setTime]                   = useState("");
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationError, setLocationError] = useState("");
-  const [location, setLocation] = useState<LocationData | null>(null);
-  const [user, setUser] = useState<UserData | null>(null);
+  const [location, setLocation]           = useState<LocationData | null>(null);
+  const [user, setUser]                   = useState<UserData | null>(null);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch {
-        console.log("Failed to load user");
-      }
+      try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
     fetchLocation();
   }, []);
@@ -85,53 +83,54 @@ function SOS() {
         const places = JSON.parse(cachedPlaces);
         if (places.length > 0) {
           nearestHospital = places[0].name;
-          hospitalDistance = `${places[0].distance}km`;
+          hospitalDistance = places[0].distance ? `${places[0].distance}` : "";
         }
-      } catch {}
+      } catch { /* ignore */ }
     }
 
-    if (location && user) {
-      const mapsLink = `https://www.google.com/maps?q=${location.latitude},${location.longitude}`;
-      const message = encodeURIComponent(
-        `🚨 EMERGENCY SOS ALERT - RoadSOS\n\n` +
-        `👤 Name: ${user.fullName}\n` +
-        `🩸 Blood Group: ${user.bloodGroup}\n` +
-        `📞 Phone: ${user.phone}\n\n` +
-        `📍 Live Location:\n${mapsLink}\n\n` +
-        `🏥 Nearest Hospital: ${nearestHospital}${hospitalDistance ? ` (${hospitalDistance})` : ""}\n\n` +
-        `⏰ Time: ${currentTime}\n\n` +
-        `Please respond immediately. This is an emergency.`
-      );
-      window.open(`https://wa.me/?text=${message}`, "_blank");
-    } else if (user) {
-      // No location — send without it
-      const message = encodeURIComponent(
-        `🚨 EMERGENCY SOS ALERT - RoadSOS\n\n` +
-        `👤 Name: ${user.fullName}\n` +
-        `🩸 Blood Group: ${user.bloodGroup}\n` +
-        `📞 Phone: ${user.phone}\n\n` +
-        `⚠️ Location unavailable — please call immediately.\n` +
-        `⏰ Time: ${currentTime}`
-      );
-      window.open(`https://wa.me/?text=${message}`, "_blank");
-    }
+    if (!user) return;
+
+    const mapsLink = location
+      ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
+      : null;
+
+    // Build medical note if available
+    const medNote = user.medicalConditions
+      ? `\n⚕️ Medical Info: ${user.medicalConditions}`
+      : "";
+
+    const message = encodeURIComponent(
+      `🚨 EMERGENCY SOS ALERT - RoadSOS\n\n` +
+      `👤 Name: ${user.fullName}\n` +
+      `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
+      `📞 Phone: ${user.phone}\n\n` +
+      (mapsLink
+        ? `📍 Live Location:\n${mapsLink}\n\n`
+        : `⚠️ Location unavailable — please call immediately.\n\n`) +
+      `🏥 Nearest Hospital: ${nearestHospital}${hospitalDistance ? ` (${hospitalDistance})` : ""}\n\n` +
+      `⏰ Time: ${currentTime}\n\n` +
+      `Please respond immediately. This is an emergency.`
+    );
+
+    window.open(`https://wa.me/?text=${message}`, "_blank");
   }
 
+  // FIX: use correct field names from new setup page
   const contacts = [
     {
-      name: user?.emergency1 || "Emergency Contact 1",
-      phone: user?.emergency1 || "",
-      tag: "Primary",
+      name:  user?.emergencyContact1Name  || "Emergency Contact 1",
+      phone: user?.emergencyContact1Phone || "",
+      tag:   "Primary",
     },
     {
-      name: user?.emergency2 || "Emergency Contact 2",
-      phone: user?.emergency2 || "",
-      tag: "Secondary",
+      name:  user?.emergencyContact2Name  || "Emergency Contact 2",
+      phone: user?.emergencyContact2Phone || "",
+      tag:   "Secondary",
     },
     {
-      name: "Emergency Services 112",
+      name:  "Emergency Services",
       phone: "112",
-      tag: "Government",
+      tag:   "Government",
     },
   ];
 
@@ -159,9 +158,10 @@ function SOS() {
             onMouseUp={() => { setHolding(false); sendSOS(); }}
             onTouchStart={() => setHolding(true)}
             onTouchEnd={() => { setHolding(false); sendSOS(); }}
+            disabled={!user}
             className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${
               holding ? "scale-95" : "animate-pulse-ring"
-            }`}
+            } disabled:opacity-50`}
           >
             <div className="flex flex-col items-center gap-2">
               <Siren className="w-10 h-10" />
@@ -197,6 +197,9 @@ function SOS() {
               <div>
                 <p className="font-semibold text-sm">Emergency Profile</p>
                 <p className="text-xs text-muted-foreground">{user?.fullName || "Unknown User"}</p>
+                {user?.medicalConditions && (
+                  <p className="text-xs text-warning-foreground mt-0.5">⚠️ {user.medicalConditions}</p>
+                )}
               </div>
             </div>
             <div className="text-right">
@@ -221,7 +224,7 @@ function SOS() {
                     Fetching live coordinates...
                   </div>
                 ) : location ? (
-                  <div className="mt-1 text-xs text-muted-foreground space-y-1">
+                  <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
                     <p>Lat: {location.latitude.toFixed(6)}</p>
                     <p>Long: {location.longitude.toFixed(6)}</p>
                   </div>
@@ -253,19 +256,21 @@ function SOS() {
                 key={index}
                 className="flex items-center gap-3 bg-card border border-border rounded-2xl p-3 shadow-card"
               >
-                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center">
-                  {contact.name[0]}
+                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm">
+                  {contact.name[0]?.toUpperCase()}
                 </div>
-                <div className="flex-1">
-                  <p className="font-semibold text-sm">{contact.name}</p>
-                  <p className="text-xs text-muted-foreground">Emergency broadcast target</p>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm truncate">{contact.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {contact.phone || "No number saved"}
+                  </p>
                 </div>
-                <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full bg-accent text-accent-foreground">
+                <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full bg-accent text-accent-foreground flex-shrink-0">
                   {contact.tag}
                 </span>
                 <a
                   href={`tel:${contact.phone || "112"}`}
-                  className="w-9 h-9 rounded-full bg-success/10 text-success flex items-center justify-center"
+                  className="w-9 h-9 rounded-full bg-success/10 text-success flex items-center justify-center flex-shrink-0"
                 >
                   <Phone className="w-4 h-4" />
                 </a>
@@ -278,9 +283,9 @@ function SOS() {
         <div className="grid grid-cols-4 gap-2">
           {[
             { label: "All Emergency", num: "112" },
-            { label: "Ambulance", num: "108" },
-            { label: "Police", num: "100" },
-            { label: "Highway", num: "1033" },
+            { label: "Ambulance",     num: "108" },
+            { label: "Police",        num: "100" },
+            { label: "Highway",       num: "1033" },
           ].map((e) => (
             <a
               key={e.num}
@@ -294,9 +299,9 @@ function SOS() {
         </div>
 
         {/* Status Banner */}
-        <div className="bg-gradient-emergency text-emergency-foreground rounded-2xl p-5 shadow-emergency">
+        <div className="bg-gradient-emergency text-emergency-foreground rounded-2xl p-5 shadow-emergency mb-2">
           <div className="flex items-start gap-3">
-            <HeartPulse className="w-6 h-6 mt-0.5" />
+            <HeartPulse className="w-6 h-6 mt-0.5 flex-shrink-0" />
             <div>
               <p className="font-bold">Emergency Broadcast Ready</p>
               <p className="text-sm text-white/85 mt-1">
