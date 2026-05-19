@@ -158,15 +158,7 @@ function Emergency() {
     useRef<any>(null);
 
   useEffect(() => {
-    const existing =
-      localStorage.getItem(
-        "roadsos-emergency-input"
-      );
-
-    if (existing) {
-      setText(existing);
-    }
-
+    
     const SpeechRecognition =
       window.SpeechRecognition ||
       window.webkitSpeechRecognition;
