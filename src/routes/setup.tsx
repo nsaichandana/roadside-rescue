@@ -12,10 +12,10 @@ export const Route = createFileRoute("/setup")({ component: Setup });
 type FormData = {
   fullName: string;
   phone: string;
-  emergency1Name: string;
-  emergency1: string;
-  emergency2Name: string;
-  emergency2: string;
+  emergencyContact1Name: string;
+  emergencyContact1Phone: string;
+  emergencyContact2Name: string;
+  emergencyContact2Phone: string;
   bloodGroup: string;
   medicalConditions: string;
 };
@@ -31,12 +31,12 @@ function validate(data: FormData): FormErrors {
     errors.phone = "Phone number is required";
   else if (!/^[0-9+\s\-]{7,15}$/.test(data.phone.trim()))
     errors.phone = "Enter a valid phone number";
-  if (!data.emergency1Name.trim())
-    errors.emergency1Name = "Contact name is required";
-  if (!data.emergency1.trim())
-    errors.emergency1 = "Phone number is required";
-  else if (!/^[0-9+\s\-]{7,15}$/.test(data.emergency1.trim()))
-    errors.emergency1 = "Enter a valid phone number";
+  if (!data.emergencyContact1Name.trim())
+    errors.emergencyContact1Name = "Contact name is required";
+  if (!data.emergencyContact1Phone.trim())
+    errors.emergencyContact1Phone = "Phone number is required";
+  else if (!/^[0-9+\s\-]{7,15}$/.test(data.emergencyContact1Phone.trim()))
+    errors.emergencyContact1Phone = "Enter a valid phone number";
   return errors;
 }
 
@@ -130,10 +130,10 @@ function Setup() {
   const [formData, setFormData] = useState<FormData>({
     fullName: "",
     phone: "",
-    emergency1Name: "",
-    emergency1: "",
-    emergency2Name: "",
-    emergency2: "",
+    emergencyContact1Name: "",
+    emergencyContact1Phone: "",
+    emergencyContact2Name: "",
+    emergencyContact2Phone: "",
     bloodGroup: "O+",
     medicalConditions: "",
   });
@@ -145,23 +145,45 @@ function Setup() {
   useEffect(() => {
     async function loadUser() {
       try {
-        const profile = await getUserProfile();
-        if (profile) {
-          const fromEdit = window.location.search.includes("edit=true");
-          if (fromEdit) {
+        // First try localStorage (faster, works offline)
+        const local = localStorage.getItem("roadsos-user");
+        const fromEdit = window.location.search.includes("edit=true");
+
+        if (local && fromEdit) {
+          try {
+            const parsed = JSON.parse(local);
             setIsEditMode(true);
             setFormData({
-              fullName:          profile.fullName                   || "",
-              phone:             profile.phone                      || "",
-              emergency1Name:    (profile as any).emergency1Name    || "",
-              emergency1:        profile.emergency1                 || "",
-              emergency2Name:    (profile as any).emergency2Name    || "",
-              emergency2:        profile.emergency2                 || "",
-              bloodGroup:        profile.bloodGroup                 || "O+",
-              medicalConditions: (profile as any).medicalConditions || "",
+              fullName:              parsed.fullName              || "",
+              phone:                 parsed.phone                 || "",
+              emergencyContact1Name: parsed.emergencyContact1Name || parsed.emergency1Name || "",
+              emergencyContact1Phone:parsed.emergencyContact1Phone|| parsed.emergency1     || "",
+              emergencyContact2Name: parsed.emergencyContact2Name || parsed.emergency2Name || "",
+              emergencyContact2Phone:parsed.emergencyContact2Phone|| parsed.emergency2     || "",
+              bloodGroup:            parsed.bloodGroup            || "O+",
+              medicalConditions:     parsed.medicalConditions     || "",
+            });
+            setLoading(false);
+            return;
+          } catch { /* fall through to Firebase */ }
+        }
+
+        const profile = await getUserProfile();
+        if (profile) {
+          if (fromEdit) {
+            setIsEditMode(true);
+            const p = profile as any;
+            setFormData({
+              fullName:              p.fullName              || "",
+              phone:                 p.phone                 || "",
+              emergencyContact1Name: p.emergencyContact1Name || p.emergency1Name || "",
+              emergencyContact1Phone:p.emergencyContact1Phone|| p.emergency1     || "",
+              emergencyContact2Name: p.emergencyContact2Name || p.emergency2Name || "",
+              emergencyContact2Phone:p.emergencyContact2Phone|| p.emergency2     || "",
+              bloodGroup:            p.bloodGroup            || "O+",
+              medicalConditions:     p.medicalConditions     || "",
             });
           } else {
-            // Returning user — skip setup, go to home
             navigate({ to: "/home" });
             return;
           }
@@ -193,11 +215,16 @@ function Setup() {
           setTimeout(() => rej(new Error("Timeout")), 10000)
         ),
       ]);
+      // Save with consistent field names that all other pages read
       localStorage.setItem("roadsos-user", JSON.stringify(formData));
       setSaved(true);
       setTimeout(() => navigate({ to: "/home" }), 1000);
     } catch (e) {
       console.error("Failed to save profile", e);
+      // Still save locally even if Firebase fails
+      localStorage.setItem("roadsos-user", JSON.stringify(formData));
+      setSaved(true);
+      setTimeout(() => navigate({ to: "/home" }), 1000);
     } finally {
       setSaving(false);
     }
@@ -305,21 +332,21 @@ function Setup() {
         {/* Emergency Contact 1 — Required */}
         <ContactPair
           label="Emergency Contact 1"
-          nameValue={formData.emergency1Name}
-          phoneValue={formData.emergency1}
-          onNameChange={set("emergency1Name")}
-          onPhoneChange={set("emergency1")}
-          nameError={errors.emergency1Name}
-          phoneError={errors.emergency1}
+          nameValue={formData.emergencyContact1Name}
+          phoneValue={formData.emergencyContact1Phone}
+          onNameChange={set("emergencyContact1Name")}
+          onPhoneChange={set("emergencyContact1Phone")}
+          nameError={errors.emergencyContact1Name}
+          phoneError={errors.emergencyContact1Phone}
         />
 
         {/* Emergency Contact 2 — Optional */}
         <ContactPair
           label="Emergency Contact 2"
-          nameValue={formData.emergency2Name}
-          phoneValue={formData.emergency2}
-          onNameChange={set("emergency2Name")}
-          onPhoneChange={set("emergency2")}
+          nameValue={formData.emergencyContact2Name}
+          phoneValue={formData.emergencyContact2Phone}
+          onNameChange={set("emergencyContact2Name")}
+          onPhoneChange={set("emergencyContact2Phone")}
           optional
         />
 

@@ -1,8 +1,8 @@
 import { analyzeEmergency } from "@/ai/gemini";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeft, AlertTriangle, Stethoscope, Ambulance,
-  Shield, Flame, Wrench, MapPin, Clock3, CheckCircle2,
+  Shield, Flame, Wrench, MapPin, Clock3,
   AlertCircle, Bike,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -65,8 +65,25 @@ function getServices(emergencyType: EmergencyType): Service[] {
   }
 }
 
-// Parse Gemini JSON response into structured card
+// Map Gemini severity string → our Severity type
+function normalizeSeverity(raw: string): Severity {
+  const s = raw?.toLowerCase() || "";
+  if (s === "critical" || s === "high") return "HIGH";
+  if (s === "moderate" || s === "medium") return "MEDIUM";
+  return "LOW";
+}
+
+// Valid EmergencyType values
+const VALID_TYPES: EmergencyType[] = [
+  "Medical Emergency",
+  "Vehicle Breakdown",
+  "Fire Emergency",
+  "Security Emergency",
+  "General Emergency",
+];
+
 function parseAIResponse(raw: string): {
+  emergency_type?: string;
   severity: string;
   call_immediately: string;
   immediate_action: string;
@@ -99,11 +116,9 @@ function Analysis() {
         const parsed: AnalysisData = JSON.parse(savedAnalysis);
         setAnalysis(parsed);
 
-        // Generate dispatch summary
         const summary = generateDispatchSummary(parsed.input, parsed.type);
         setDispatch(summary);
 
-        // Call Gemini
         setLoadingAI(true);
         let response = "";
         try {
@@ -111,6 +126,7 @@ function Analysis() {
         } catch (error) {
           console.error("Gemini failed:", error);
           response = JSON.stringify({
+            emergency_type: parsed.type,
             severity: summary.severity,
             call_immediately: summary.callFirst,
             immediate_action: summary.immediateAction,
@@ -119,7 +135,28 @@ function Analysis() {
             disclaimer: "AI analysis temporarily unavailable. Call 112 immediately.",
           });
         }
+
         setAiResponse(response);
+
+        // --- KEY FIX: update roadsos-analysis type from Gemini if it returned one ---
+        const parsedAI = parseAIResponse(response);
+        if (parsedAI?.emergency_type && VALID_TYPES.includes(parsedAI.emergency_type as EmergencyType)) {
+          const aiType = parsedAI.emergency_type as EmergencyType;
+          const aiSeverity = normalizeSeverity(parsedAI.severity);
+
+          const updatedAnalysis: AnalysisData = {
+            ...parsed,
+            type: aiType,
+            severity: aiSeverity,
+          };
+          setAnalysis(updatedAnalysis);
+          localStorage.setItem("roadsos-analysis", JSON.stringify(updatedAnalysis));
+
+          // Also update dispatch with corrected type
+          const updatedDispatch = generateDispatchSummary(parsed.input, aiType);
+          setDispatch(updatedDispatch);
+        }
+
       } catch (error) {
         console.error("Failed to load analysis", error);
       } finally {
@@ -128,6 +165,12 @@ function Analysis() {
     }
     loadAnalysis();
   }, []);
+
+  function handleViewNearby() {
+    // roadsos-analysis is already up to date (updated above with Gemini type)
+    // Just navigate — nearby.tsx will read it
+    navigate({ to: "/nearby" });
+  }
 
   if (!analysis) {
     return (
@@ -188,7 +231,7 @@ function Analysis() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Emergency Type</span>
-                <span className="font-bold">{dispatch.type}</span>
+                <span className="font-bold">{analysis.type}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Severity</span>
@@ -231,8 +274,15 @@ function Analysis() {
             </div>
           ) : parsedAI ? (
             <div className="space-y-3">
-              <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${getSeverityBadgeColor(parsedAI.severity as any)}`}>
-                Severity: {parsedAI.severity}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${getSeverityBadgeColor(parsedAI.severity as any)}`}>
+                  Severity: {parsedAI.severity}
+                </div>
+                {parsedAI.emergency_type && (
+                  <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary/10 text-primary">
+                    {parsedAI.emergency_type}
+                  </div>
+                )}
               </div>
 
               <p className="text-sm font-semibold">{parsedAI.immediate_action}</p>
@@ -284,19 +334,19 @@ function Analysis() {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3 pt-2">
-          <Link
-            to="/sos"
+          <button
+            onClick={() => navigate({ to: "/sos" })}
             className="text-center bg-card border border-border rounded-2xl py-4 font-semibold text-sm"
           >
             Send SOS
-          </Link>
-          <Link
-            to="/nearby"
+          </button>
+          <button
+            onClick={handleViewNearby}
             className="inline-flex items-center justify-center gap-2 bg-gradient-emergency text-emergency-foreground rounded-2xl py-4 font-bold text-sm shadow-emergency"
           >
             <MapPin className="w-4 h-4" />
-            View Nearby
-          </Link>
+            {loadingAI ? "Loading..." : "View Nearby"}
+          </button>
         </div>
 
       </section>
