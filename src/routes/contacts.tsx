@@ -21,11 +21,64 @@ const priorityClass: Record<Contact["priority"], string> = {
 
 const emptyForm = { name: "", phone: "", relation: "" };
 
+// FIX: FormPanel moved OUTSIDE Contacts so React doesn't treat it as a
+// new component type on every render — prevents input losing focus after
+// each keystroke.
+function FormPanel({
+  form,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  form: { name: string; phone: string; relation: string };
+  onChange: (field: string, value: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mx-5 mb-4 bg-card border border-border rounded-2xl p-4 shadow-card space-y-3">
+      <input
+        value={form.name}
+        onChange={(e) => onChange("name", e.target.value)}
+        placeholder="Full name"
+        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+      <input
+        value={form.phone}
+        onChange={(e) => onChange("phone", e.target.value)}
+        placeholder="Phone number"
+        type="tel"
+        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+      <input
+        value={form.relation}
+        onChange={(e) => onChange("relation", e.target.value)}
+        placeholder="Relation (e.g. Dad, Doctor)"
+        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={onCancel}
+          className="py-3 rounded-xl bg-muted font-semibold text-sm inline-flex items-center justify-center gap-1.5"
+        >
+          <X className="w-4 h-4" /> Cancel
+        </button>
+        <button
+          onClick={onSave}
+          className="py-3 rounded-xl bg-primary text-primary-foreground font-semibold text-sm inline-flex items-center justify-center gap-1.5"
+        >
+          <Check className="w-4 h-4" /> Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Contacts() {
-  const [list, setList]       = useState<Contact[]>([]);
-  const [adding, setAdding]   = useState(false);
+  const [list, setList]           = useState<Contact[]>([]);
+  const [adding, setAdding]       = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm]       = useState(emptyForm);
+  const [form, setForm]           = useState(emptyForm);
 
   useEffect(() => {
     const savedContacts = localStorage.getItem("roadsos-contacts");
@@ -47,7 +100,6 @@ function Contacts() {
       const u = JSON.parse(savedUser);
       const initial: Contact[] = [];
 
-      // FIX: use new field names from setup.tsx
       if (u.emergencyContact1Name && u.emergencyContact1Phone) {
         initial.push({
           id: "1",
@@ -75,6 +127,10 @@ function Contacts() {
   function saveContacts(updated: Contact[]) {
     setList(updated);
     localStorage.setItem("roadsos-contacts", JSON.stringify(updated));
+  }
+
+  function handleFormChange(field: string, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function startAdd() {
@@ -126,44 +182,6 @@ function Contacts() {
     saveContacts(list.filter((c) => c.id !== id));
   }
 
-  const FormPanel = ({ onSave }: { onSave: () => void }) => (
-    <div className="mx-5 mb-4 bg-card border border-border rounded-2xl p-4 shadow-card space-y-3">
-      <input
-        value={form.name}
-        onChange={(e) => setForm({ ...form, name: e.target.value })}
-        placeholder="Full name"
-        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-      />
-      <input
-        value={form.phone}
-        onChange={(e) => setForm({ ...form, phone: e.target.value })}
-        placeholder="Phone number"
-        type="tel"
-        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-      />
-      <input
-        value={form.relation}
-        onChange={(e) => setForm({ ...form, relation: e.target.value })}
-        placeholder="Relation (e.g. Dad, Doctor)"
-        className="w-full bg-muted rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-      />
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={cancelForm}
-          className="py-3 rounded-xl bg-muted font-semibold text-sm inline-flex items-center justify-center gap-1.5"
-        >
-          <X className="w-4 h-4" /> Cancel
-        </button>
-        <button
-          onClick={onSave}
-          className="py-3 rounded-xl bg-primary text-primary-foreground font-semibold text-sm inline-flex items-center justify-center gap-1.5"
-        >
-          <Check className="w-4 h-4" /> Save
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <AppShell>
       <ScreenHeader
@@ -181,7 +199,14 @@ function Contacts() {
       />
 
       {/* Add form */}
-      {adding && <FormPanel onSave={saveAdd} />}
+      {adding && (
+        <FormPanel
+          form={form}
+          onChange={handleFormChange}
+          onSave={saveAdd}
+          onCancel={cancelForm}
+        />
+      )}
 
       <div className="px-5 space-y-3">
         {list.length === 0 ? (
@@ -194,9 +219,13 @@ function Contacts() {
         ) : (
           list.map((c) => (
             <div key={c.id}>
-              {/* Edit form inline below this card */}
               {editingId === c.id ? (
-                <FormPanel onSave={saveEdit} />
+                <FormPanel
+                  form={form}
+                  onChange={handleFormChange}
+                  onSave={saveEdit}
+                  onCancel={cancelForm}
+                />
               ) : (
                 <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
                   <div className="flex items-start gap-3">
@@ -225,7 +254,6 @@ function Contacts() {
                       <Phone className="w-4 h-4" />
                       Call
                     </a>
-                    {/* FIX: Edit button now works */}
                     <button
                       onClick={() => startEdit(c)}
                       className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-muted text-foreground font-semibold text-sm"
