@@ -1,35 +1,21 @@
+import { analyzeEmergency } from "@/ai/gemini";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
-  analyzeEmergency,
-} from "@/ai/gemini";
-
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-} from "@tanstack/react-router";
-
-import {
-  ArrowLeft,
-  AlertTriangle,
-  Stethoscope,
-  Ambulance,
-  Shield,
-  Flame,
-  Wrench,
-  MapPin,
-  Clock3,
-  CheckCircle2,
+  ArrowLeft, AlertTriangle, Stethoscope, Ambulance,
+  Shield, Flame, Wrench, MapPin, Clock3, CheckCircle2,
+  AlertCircle, Bike,
 } from "lucide-react";
-
+import { useEffect, useState } from "react";
 import {
-  useEffect,
-  useState,
-} from "react";
+  generateDispatchSummary,
+  getSeverityBadgeColor,
+  getPeakHourWarning,
+  type DispatchSummary,
+} from "@/utils/emergencyIntelligence";
 
-export const Route =
-  createFileRoute("/analysis")({
-    component: Analysis,
-  });
+export const Route = createFileRoute("/analysis")({
+  component: Analysis,
+});
 
 type EmergencyType =
   | "Medical Emergency"
@@ -38,10 +24,7 @@ type EmergencyType =
   | "Security Emergency"
   | "General Emergency";
 
-type Severity =
-  | "LOW"
-  | "MEDIUM"
-  | "HIGH";
+type Severity = "LOW" | "MEDIUM" | "HIGH";
 
 type AnalysisData = {
   input: string;
@@ -50,429 +33,256 @@ type AnalysisData = {
   timestamp: string;
 };
 
-type Service = {
-  icon: any;
-  label: string;
-};
+type Service = { icon: any; label: string };
 
-function getRecommendations(
-  emergencyType: EmergencyType
-): string[] {
-  switch (
-    emergencyType
-  ) {
+function getServices(emergencyType: EmergencyType): Service[] {
+  switch (emergencyType) {
     case "Medical Emergency":
       return [
-        "Move victim to a safe area if possible",
-        "Call ambulance immediately",
-        "Avoid moving unconscious persons",
-        "Apply first aid if trained",
+        { icon: Ambulance, label: "Ambulance" },
+        { icon: Stethoscope, label: "Hospital" },
+        { icon: Shield, label: "Police" },
       ];
-
     case "Fire Emergency":
       return [
-        "Evacuate the area immediately",
-        "Avoid elevators during fire",
-        "Call nearby fire services",
-        "Stay low to avoid smoke inhalation",
+        { icon: Flame, label: "Fire Station" },
+        { icon: Ambulance, label: "Emergency Care" },
+        { icon: Shield, label: "Police" },
       ];
-
     case "Vehicle Breakdown":
       return [
-        "Move vehicle away from traffic",
-        "Turn on hazard lights",
-        "Contact nearby mechanic",
-        "Stay visible and safe",
+        { icon: Wrench, label: "Mechanic" },
+        { icon: Shield, label: "Roadside Help" },
+        { icon: Ambulance, label: "Emergency Support" },
       ];
-
     case "Security Emergency":
       return [
-        "Move to a secure location",
-        "Avoid confrontation",
-        "Call police authorities",
-        "Share your live location with trusted contacts",
+        { icon: Shield, label: "Police" },
+        { icon: Ambulance, label: "Emergency Response" },
       ];
-
     default:
-      return [
-        "Stay calm",
-        "Contact emergency services",
-        "Share your location",
-        "Seek nearby assistance",
-      ];
+      return [{ icon: Ambulance, label: "Emergency Help" }];
   }
 }
 
-function getServices(
-  emergencyType: EmergencyType
-): Service[] {
-  switch (
-    emergencyType
-  ) {
-    case "Medical Emergency":
-      return [
-        {
-          icon:
-            Ambulance,
-          label:
-            "Ambulance",
-        },
-
-        {
-          icon:
-            Stethoscope,
-          label:
-            "Hospital",
-        },
-
-        {
-          icon:
-            Shield,
-          label:
-            "Police",
-        },
-      ];
-
-    case "Fire Emergency":
-      return [
-        {
-          icon: Flame,
-          label:
-            "Fire Station",
-        },
-
-        {
-          icon:
-            Ambulance,
-          label:
-            "Emergency Care",
-        },
-
-        {
-          icon:
-            Shield,
-          label:
-            "Police",
-        },
-      ];
-
-    case "Vehicle Breakdown":
-      return [
-        {
-          icon:
-            Wrench,
-          label:
-            "Mechanic",
-        },
-
-        {
-          icon:
-            Shield,
-          label:
-            "Roadside Help",
-        },
-
-        {
-          icon:
-            Ambulance,
-          label:
-            "Emergency Support",
-        },
-      ];
-
-    case "Security Emergency":
-      return [
-        {
-          icon:
-            Shield,
-          label:
-            "Police",
-        },
-
-        {
-          icon:
-            Ambulance,
-          label:
-            "Emergency Response",
-        },
-      ];
-
-    default:
-      return [
-        {
-          icon:
-            Ambulance,
-          label:
-            "Emergency Help",
-        },
-      ];
-  }
-}
-
-function getSeverityColor(
-  severity: Severity
-) {
-  switch (
-    severity
-  ) {
-    case "HIGH":
-      return "bg-gradient-emergency text-emergency-foreground";
-
-    case "MEDIUM":
-      return "bg-warning text-warning-foreground";
-
-    default:
-      return "bg-success text-success-foreground";
+// Parse Gemini JSON response into structured card
+function parseAIResponse(raw: string): {
+  severity: string;
+  call_immediately: string;
+  immediate_action: string;
+  do: string[];
+  dont: string[];
+  disclaimer: string;
+} | null {
+  try {
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
   }
 }
 
 function Analysis() {
-  const navigate =
-    useNavigate();
-
-  const [analysis, setAnalysis] =
-    useState<AnalysisData | null>(
-      null
-    );
-  const [aiResponse, setAiResponse] =
-    useState("");
-  
-  const [loadingAI, setLoadingAI] =
-    useState(false);
+  const navigate = useNavigate();
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [aiResponse, setAiResponse] = useState<string>("");
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [dispatch, setDispatch] = useState<DispatchSummary | null>(null);
+  const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
-      async function loadAnalysis() {
-        const savedAnalysis =
-          localStorage.getItem(
-            "roadsos-analysis"
-          );
-    
-        if (
-          savedAnalysis
-        ) {
-          try {
-            const parsed =
-              JSON.parse(
-                savedAnalysis
-              );
-    
-            setAnalysis(
-              parsed
-            );
-    
-            setLoadingAI(
-              true
-            );
-    
-            let response =
-              "";
+    async function loadAnalysis() {
+      const savedAnalysis = localStorage.getItem("roadsos-analysis");
+      if (!savedAnalysis) return;
 
-            try {
-              response =
-                await analyzeEmergency(
-                  parsed.input
-                );
-            } catch (error) {
-              console.error(
-                "Gemini failed:",
-                error
-              );
+      try {
+        const parsed: AnalysisData = JSON.parse(savedAnalysis);
+        setAnalysis(parsed);
 
-              response =
-                "AI analysis temporarily unavailable due to API rate limits. Please try again shortly.";
-            }
+        // Generate dispatch summary
+        const summary = generateDispatchSummary(parsed.input, parsed.type);
+        setDispatch(summary);
 
-            setAiResponse(response);
-    
-            setAiResponse(
-              response
-            );
-          } catch (error) {
-            console.error(
-              "Failed to load analysis",
-              error
-            );
-          } finally {
-            setLoadingAI(
-              false
-            );
-          }
+        // Call Gemini
+        setLoadingAI(true);
+        let response = "";
+        try {
+          response = await analyzeEmergency(parsed.input);
+        } catch (error) {
+          console.error("Gemini failed:", error);
+          response = JSON.stringify({
+            severity: summary.severity,
+            call_immediately: summary.callFirst,
+            immediate_action: summary.immediateAction,
+            do: ["Stay calm", "Call emergency services", "Share your location"],
+            dont: ["Panic", "Leave victim unattended", "Move severely injured persons"],
+            disclaimer: "AI analysis temporarily unavailable. Call 112 immediately.",
+          });
         }
+        setAiResponse(response);
+      } catch (error) {
+        console.error("Failed to load analysis", error);
+      } finally {
+        setLoadingAI(false);
       }
-    
-      loadAnalysis();
+    }
+    loadAnalysis();
   }, []);
 
   if (!analysis) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">
-          No emergency analysis found.
-        </p>
+        <p className="text-muted-foreground">No emergency analysis found.</p>
       </div>
     );
   }
 
-  const recommendations =
-    getRecommendations(
-      analysis.type
-    );
-
-  const services =
-    getServices(
-      analysis.type
-    );
+  const services = getServices(analysis.type);
+  const parsedAI = parseAIResponse(aiResponse);
 
   return (
     <div className="min-h-screen bg-background pb-10">
       <header className="px-5 pt-6 pb-4 flex items-center gap-3">
         <button
-          onClick={() =>
-            navigate({
-              to: "/emergency",
-            })
-          }
+          onClick={() => navigate({ to: "/emergency" })}
           className="p-2 -ml-2 rounded-xl hover:bg-muted"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-
         <div>
-          <h1 className="text-xl font-bold">
-            AI Analysis
-          </h1>
-
-          <p className="text-xs text-muted-foreground">
-            Centralized emergency intelligence
-          </p>
+          <h1 className="text-xl font-bold">AI Analysis</h1>
+          <p className="text-xs text-muted-foreground">Emergency intelligence report</p>
         </div>
       </header>
 
       <section className="px-5 space-y-4">
-        <div
-          className={`rounded-3xl p-6 shadow-emergency ${getSeverityColor(
-            analysis.severity
-          )}`}
-        >
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 text-xs font-bold tracking-wide">
-              <AlertTriangle className="w-3.5 h-3.5" />
 
-              SEVERITY:
-              {" "}
-              {
-                analysis.severity
-              }
-            </div>
+        {/* Peak Hour Warning */}
+        {peakWarning && (
+          <div className="bg-warning/15 border border-warning/30 rounded-2xl p-3 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-warning-foreground mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-warning-foreground font-medium">{peakWarning}</p>
+          </div>
+        )}
 
-            <div className="inline-flex items-center gap-1 text-xs text-white/90">
-              <Clock3 className="w-3.5 h-3.5" />
-
-              {
-                analysis.timestamp
-              }
+        {/* Two-Wheeler Protocol Banner */}
+        {dispatch?.twoWheelerProtocol && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
+            <Bike className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-bold text-destructive text-sm">⚠️ Two-Wheeler Protocol Activated</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                High risk of head/spinal trauma detected. Prioritizing neurology-capable trauma centres.
+                Do NOT remove helmet. Do not move victim.
+              </p>
             </div>
           </div>
+        )}
 
-          <h2 className="mt-4 text-2xl font-black">
-            {
-              analysis.type
-            }
-          </h2>
-
-          <p className="mt-2 text-sm text-white/90">
-            {
-              analysis.input
-            }
-          </p>
-        </div>
-
-        <div className="bg-card border border-border rounded-2xl p-5 shadow-card">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-success" />
-
-            <p className="text-sm font-semibold">
-              Recommended Actions
+        {/* RoadSOS Dispatch Summary Card */}
+        {dispatch && (
+          <div className="bg-card border-2 border-primary rounded-2xl p-5 shadow-card">
+            <p className="text-xs uppercase tracking-wider font-bold text-primary mb-3">
+              🚨 RoadSOS Dispatch Summary
             </p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Emergency Type</span>
+                <span className="font-bold">{dispatch.type}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Severity</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${getSeverityBadgeColor(dispatch.severity)}`}>
+                  {dispatch.severity}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Primary Risk</span>
+                <span className="font-semibold text-right max-w-[55%]">{dispatch.primaryRisk}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Time</span>
+                <span className="font-medium">{dispatch.timestamp}</span>
+              </div>
+              <div className="pt-2 border-t border-border">
+                <p className="text-xs text-muted-foreground mb-1">Immediate Action</p>
+                <p className="text-sm font-semibold text-foreground">{dispatch.immediateAction}</p>
+              </div>
+            </div>
+            <a
+              href={`tel:${dispatch.callFirst}`}
+              className="mt-4 block w-full text-center bg-gradient-emergency text-emergency-foreground font-bold py-3 rounded-xl"
+            >
+              📞 Call {dispatch.callFirst} Now
+            </a>
           </div>
+        )}
 
-          <ul className="mt-4 space-y-3 text-sm">
-            {recommendations.map(
-              (
-                action,
-                index
-              ) => (
-                <li
-                  key={index}
-                  className="flex gap-3"
-                >
-                  <span className="mt-0.5 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center flex-shrink-0">
-                    {index + 1}
-                  </span>
-
-                  <span>
-                    {action}
-                  </span>
-                </li>
-              )
-            )}
-          </ul>
-        </div>
-
-        <div>
-          <p className="text-sm font-semibold mb-3">
-            Recommended Services
-          </p>
-
-          <div className="grid grid-cols-3 gap-3">
-            {services.map(
-              (
-                service
-              ) => {
-                const Icon =
-                  service.icon;
-
-                return (
-                  <div
-                    key={
-                      service.label
-                    }
-                    className="bg-card border border-border rounded-2xl p-4 text-center shadow-card"
-                  >
-                    <Icon className="w-6 h-6 mx-auto text-primary" />
-
-                    <p className="text-xs font-semibold mt-2">
-                      {
-                        service.label
-                      }
-                    </p>
-                  </div>
-                );
-              }
-            )}
-          </div>
-        </div>
-
+        {/* Gemini AI Triage Card */}
         <div className="bg-card border border-border rounded-2xl p-5 shadow-card">
-          <p className="text-xs uppercase tracking-wider text-primary font-semibold">
+          <p className="text-xs uppercase tracking-wider text-primary font-semibold mb-3">
             Gemini AI Emergency Intelligence
           </p>
 
           {loadingAI ? (
-            <div className="mt-4 flex items-center gap-3">
+            <div className="flex items-center gap-3">
               <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-
-              <p className="text-sm text-muted-foreground">
-              AI is analyzing the emergency...
-              </p>
+              <p className="text-sm text-muted-foreground">AI analyzing emergency...</p>
             </div>
-        ) : (
-          <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-            {aiResponse}
-          </div>
-        )}
+          ) : parsedAI ? (
+            <div className="space-y-3">
+              <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${getSeverityBadgeColor(parsedAI.severity as any)}`}>
+                Severity: {parsedAI.severity}
+              </div>
+
+              <p className="text-sm font-semibold">{parsedAI.immediate_action}</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-success/10 rounded-xl p-3">
+                  <p className="text-xs font-bold text-success mb-2">✅ DO</p>
+                  {parsedAI.do?.map((d, i) => (
+                    <p key={i} className="text-xs mt-1 text-foreground">• {d}</p>
+                  ))}
+                </div>
+                <div className="bg-destructive/10 rounded-xl p-3">
+                  <p className="text-xs font-bold text-destructive mb-2">❌ DON'T</p>
+                  {parsedAI.dont?.map((d, i) => (
+                    <p key={i} className="text-xs mt-1 text-foreground">• {d}</p>
+                  ))}
+                </div>
+              </div>
+
+              {parsedAI.disclaimer && (
+                <p className="text-xs text-muted-foreground italic border-t border-border pt-2">
+                  ⚠️ {parsedAI.disclaimer}
+                </p>
+              )}
+            </div>
+          ) : aiResponse ? (
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{aiResponse}</p>
+          ) : null}
         </div>
 
+        {/* Recommended Services */}
+        <div>
+          <p className="text-sm font-semibold mb-3">Recommended Services</p>
+          <div className="grid grid-cols-3 gap-3">
+            {services.map((service) => {
+              const Icon = service.icon;
+              return (
+                <div
+                  key={service.label}
+                  className="bg-card border border-border rounded-2xl p-4 text-center shadow-card"
+                >
+                  <Icon className="w-6 h-6 mx-auto text-primary" />
+                  <p className="text-xs font-semibold mt-2">{service.label}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3 pt-2">
           <Link
             to="/sos"
@@ -480,16 +290,15 @@ function Analysis() {
           >
             Send SOS
           </Link>
-
           <Link
             to="/nearby"
             className="inline-flex items-center justify-center gap-2 bg-gradient-emergency text-emergency-foreground rounded-2xl py-4 font-bold text-sm shadow-emergency"
           >
             <MapPin className="w-4 h-4" />
-
             View Nearby
           </Link>
         </div>
+
       </section>
     </div>
   );
