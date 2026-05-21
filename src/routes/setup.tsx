@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ArrowLeft, User, Phone, Heart,
   AlertCircle, Stethoscope, CheckCircle2,
 } from "lucide-react";
 import { saveUserProfile, getUserProfile } from "@/firebase/users";
 
-export const Route = createFileRoute("/setup")({ component: Setup });
+export const Route = createFileRoute("/setup")({
+  component: Setup,
+  validateSearch: (search: Record<string, unknown>) => ({
+    edit: search.edit === "true" ? "true" : undefined,
+  }),
+});
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type FormData = {
@@ -121,6 +126,7 @@ function ContactPair({
 // ── Main Component ─────────────────────────────────────────────────────────
 function Setup() {
   const navigate = useNavigate();
+  const search = useSearch({ from: "/setup" });
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
@@ -147,7 +153,7 @@ function Setup() {
       try {
         // First try localStorage (faster, works offline)
         const local = localStorage.getItem("roadsos-user");
-        const fromEdit = window.location.search.includes("edit=true");
+        const fromEdit = search.edit === "true";
 
         if (local && fromEdit) {
           try {

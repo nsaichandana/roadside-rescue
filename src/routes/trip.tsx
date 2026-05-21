@@ -19,12 +19,30 @@ type LocationState = {
   updatedAt: string;
 } | null;
 
+const geocodeCache = new Map<string, string>();
+
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  // Round to 3 decimals (~111m precision) for cache key
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+
+  // 1. In-memory cache (same session)
+  if (geocodeCache.has(key)) return geocodeCache.get(key)!;
+
+  // 2. localStorage cache (across sessions / offline)
   try {
+    const stored = localStorage.getItem(`roadsos-geocode-${key}`);
+    if (stored) { geocodeCache.set(key, stored); return stored; }
+  } catch { /* ignore */ }
+
+  // 3. Try network
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { "Accept-Language": "en" } }
+      { headers: { "Accept-Language": "en" }, signal: controller.signal }
     );
+    clearTimeout(timer);
     const data = await res.json();
     const addr = data.address;
     const parts = [
@@ -32,8 +50,13 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
       addr.city || addr.town || addr.village || addr.county,
       addr.state,
     ].filter(Boolean);
-    return parts.slice(0, 2).join(", ") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    const label = parts.slice(0, 2).join(", ") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    // Cache for future offline use
+    geocodeCache.set(key, label);
+    try { localStorage.setItem(`roadsos-geocode-${key}`, label); } catch { /* ignore */ }
+    return label;
   } catch {
+    // Offline fallback — coordinates only
     return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   }
 }

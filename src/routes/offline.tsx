@@ -25,30 +25,38 @@ type Contact = {
   priority: string;
 };
 
-// Shape written by nearby.tsx after every successful OSM fetch
+// Shape written by nearby.tsx / places.ts after every successful OSM fetch
 type CachedPlace = {
   name: string;
-  type: string; // "hospital" | "ambulance" | "police" | "mechanic"
+  type: string;
   distance?: string;
   address?: string;
   lat?: number;
   lon?: number;
 };
 
-// Also read the user profile emergency contacts as a fallback
 type UserProfile = {
   fullName?: string;
+  bloodGroup?: string;
+  medicalConditions?: string;
   emergencyContact1Name?: string;
   emergencyContact1Phone?: string;
   emergencyContact2Name?: string;
   emergencyContact2Phone?: string;
 };
 
+// FIX: complete map covering all types that places.ts / nearby.tsx can produce
 const typeLabel: Record<string, string> = {
-  hospital: "🏥 Hospital",
-  ambulance: "🚑 Ambulance",
-  police: "👮 Police",
-  mechanic: "🔧 Mechanic",
+  hospital:     "🏥 Hospital",
+  ambulance:    "🚑 Ambulance",
+  police:       "👮 Police Station",
+  mechanic:     "🔧 Mechanic / Towing",
+  fire_station: "🚒 Fire Station",
+  pharmacy:     "💊 Pharmacy",
+  fuel:         "⛽ Fuel Station",
+  showroom:     "🚗 Service Centre",
+  clinic:       "🏥 Clinic",
+  doctors:      "🩺 Doctor",
 };
 
 function Offline() {
@@ -58,6 +66,7 @@ function Offline() {
   const [profileContacts, setProfileContacts] = useState<
     { name: string; phone: string; label: string }[]
   >([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [lastSync, setLastSync] = useState("Never");
   const [lastLocation, setLastLocation] = useState<string | null>(null);
 
@@ -68,11 +77,12 @@ function Offline() {
       try { setContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
     }
 
-    // Load emergency contacts from user profile
+    // Load emergency contacts + blood group from user profile
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
       try {
         const user: UserProfile = JSON.parse(savedUser);
+        setProfile(user);
         const pc: { name: string; phone: string; label: string }[] = [];
         if (user.emergencyContact1Name && user.emergencyContact1Phone) {
           pc.push({ name: user.emergencyContact1Name, phone: user.emergencyContact1Phone, label: "Primary" });
@@ -102,17 +112,13 @@ function Offline() {
     // Load last known location label
     const locLabel = localStorage.getItem("roadsos-last-location-label");
     if (locLabel) setLastLocation(locLabel);
-
-    // If no sync time recorded, set now as a fallback
-    if (!syncTime) {
-      const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      setLastSync(now);
-    }
   }, []);
 
   const allContacts = [
     ...profileContacts.map((c) => ({ ...c, id: c.phone, relation: c.label })),
-    ...contacts.map((c) => ({ ...c, label: c.relation })),
+    ...contacts.filter((c) =>
+      !profileContacts.some((pc) => pc.phone === c.phone)
+    ).map((c) => ({ ...c, label: c.relation })),
   ];
 
   return (
@@ -130,7 +136,7 @@ function Offline() {
             <p className="font-semibold text-sm">Offline emergency mode ready</p>
             <p className="text-xs text-muted-foreground">
               Last synced: {lastSync}
-              {lastLocation ? ` • ${lastLocation}` : ""}
+              {lastLocation ? ` · ${lastLocation}` : ""}
             </p>
           </div>
           <button
@@ -141,6 +147,33 @@ function Offline() {
             Sync
           </button>
         </div>
+
+        {/* Emergency profile card — shows blood group offline */}
+        {profile && (
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-semibold text-sm">Emergency Profile (Offline)</p>
+                <div className="mt-2 flex items-center gap-3 flex-wrap">
+                  {profile.bloodGroup && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-destructive/10 text-destructive text-xs font-bold">
+                      🩸 {profile.bloodGroup}
+                    </span>
+                  )}
+                  {profile.medicalConditions && (
+                    <span className="text-xs text-warning-foreground font-medium">
+                      ⚠️ {profile.medicalConditions}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Visible to paramedics even without internet
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Location backup */}
         <div className="bg-card border border-border rounded-2xl p-4 shadow-card">

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   Siren, MapPin, Check, Phone, Clock3,
   ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
+  MessageSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
@@ -9,7 +10,6 @@ import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 
 export const Route = createFileRoute("/sos")({ component: SOS });
 
-// FIX: updated to match new setup.tsx field names
 type UserData = {
   fullName: string;
   phone: string;
@@ -19,6 +19,18 @@ type UserData = {
   emergencyContact1Phone?: string;
   emergencyContact2Name?: string;
   emergencyContact2Phone?: string;
+  // legacy fallback
+  emergency1Name?: string;
+  emergency1?: string;
+  emergency2Name?: string;
+  emergency2?: string;
+};
+
+type SavedContact = {
+  id: string;
+  name: string;
+  phone: string;
+  relation?: string;
 };
 
 type LocationData = {
@@ -26,21 +38,65 @@ type LocationData = {
   longitude: number;
 };
 
+/** Normalise phone to E.164-ish Indian number for wa.me */
+function normalisePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("91") && digits.length === 12) return digits;
+  if (digits.length === 10) return "91" + digits;
+  return digits;
+}
+
+/** Build the SOS message text (plain, NOT encoded) */
+function buildMessage(
+  user: UserData,
+  location: LocationData | null,
+  nearestHospital: string,
+  time: string
+): string {
+  const mapsLink = location
+    ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
+    : null;
+  const medNote = user.medicalConditions
+    ? `\n⚕️ Medical Info: ${user.medicalConditions}`
+    : "";
+  return (
+    `🚨 EMERGENCY SOS — RoadSOS\n\n` +
+    `👤 Name: ${user.fullName}\n` +
+    `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
+    `📞 Phone: ${user.phone}\n\n` +
+    (mapsLink
+      ? `📍 Live Location:\n${mapsLink}\n\n`
+      : `⚠️ Location unavailable — please call immediately.\n\n`) +
+    `🏥 Nearest Help: ${nearestHospital}\n` +
+    `⏰ Time: ${time}\n\n` +
+    `Please respond immediately. This is an emergency.`
+  );
+}
+
 function SOS() {
-  const [sent, setSent]                   = useState(false);
-  const [holding, setHolding]             = useState(false);
-  const [time, setTime]                   = useState("");
+  const [sent, setSent]                       = useState(false);
+  const [holding, setHolding]                 = useState(false);
+  const [time, setTime]                       = useState("");
   const [loadingLocation, setLoadingLocation] = useState(true);
-  const [locationError, setLocationError] = useState("");
-  const [location, setLocation]           = useState<LocationData | null>(null);
-  const [user, setUser]                   = useState<UserData | null>(null);
+  const [locationError, setLocationError]     = useState("");
+  const [location, setLocation]               = useState<LocationData | null>(null);
+  const [user, setUser]                       = useState<UserData | null>(null);
+  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
+    // Load profile
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
       try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
+
+    // Load all saved contacts from contacts page
+    const savedContacts = localStorage.getItem("roadsos-contacts");
+    if (savedContacts) {
+      try { setAllContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
+    }
+
     fetchLocation();
   }, []);
 
@@ -50,23 +106,81 @@ function SOS() {
       setLoadingLocation(false);
       return;
     }
+    // Stage 1: quick low-accuracy fix (fast, works indoors)
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
+      (pos) => {
+        setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
         setLoadingLocation(false);
+        // Stage 2: silently upgrade to high-accuracy
+        navigator.geolocation.getCurrentPosition(
+          (precise) => {
+            setLocation({ latitude: precise.coords.latitude, longitude: precise.coords.longitude });
+          },
+          () => { /* already have coarse location — ignore */ },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
       },
       () => {
-        setLocationError("Unable to fetch live location.");
+        // Fallback 1: try roadsos-last-location (written by trip.tsx)
+        let recovered = false;
+        const lastLoc = localStorage.getItem("roadsos-last-location");
+        if (lastLoc) {
+          try {
+            const d = JSON.parse(lastLoc);
+            if (d?.lat && d?.lon) {
+              setLocation({ latitude: d.lat, longitude: d.lon });
+              recovered = true;
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Fallback 2: first item in roadsos-last-places array has lat/lon
+        if (!recovered) {
+          const cachedPlaces = localStorage.getItem("roadsos-last-places");
+          if (cachedPlaces) {
+            try {
+              const places = JSON.parse(cachedPlaces);
+              // nearby.tsx writes the search origin as first element or
+              // stores lat/lon at array level depending on version — check both
+              if (Array.isArray(places) && places[0]?.lat && places[0]?.lon) {
+                setLocation({ latitude: places[0].lat, longitude: places[0].lon });
+                recovered = true;
+              } else if (!Array.isArray(places) && places?.lat && places?.lon) {
+                setLocation({ latitude: places.lat, longitude: places.lon });
+                recovered = true;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+
+        // Fallback 3: roadsos-trip-origin written by trip.tsx
+        if (!recovered) {
+          const tripOrigin = localStorage.getItem("roadsos-trip-origin");
+          if (tripOrigin) {
+            try {
+              const d = JSON.parse(tripOrigin);
+              if (d?.lat && d?.lon) {
+                setLocation({ latitude: d.lat, longitude: d.lon });
+                recovered = true;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+
+        setLocationError(
+          recovered
+            ? "Live GPS unavailable — using last known location."
+            : "Location unavailable — please share your location manually."
+        );
         setLoadingLocation(false);
       },
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
     );
   }
 
   function sendSOS() {
+    if (!user) return;
+
     const currentTime = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -77,68 +191,93 @@ function SOS() {
     // Get nearest hospital from cache
     const cachedPlaces = localStorage.getItem("roadsos-last-places");
     let nearestHospital = "Nearest emergency service";
-    let hospitalDistance = "";
     if (cachedPlaces) {
       try {
         const places = JSON.parse(cachedPlaces);
-        if (places.length > 0) {
-          nearestHospital = places[0].name;
-          hospitalDistance = places[0].distance ? `${places[0].distance}` : "";
+        if (Array.isArray(places) && places.length > 0) {
+          const dist = places[0].distance ? ` (${places[0].distance})` : "";
+          nearestHospital = `${places[0].name}${dist}`;
         }
       } catch { /* ignore */ }
     }
 
-    if (!user) return;
+    const msgText = buildMessage(user, location, nearestHospital, currentTime);
 
-    const mapsLink = location
-      ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
-      : null;
+    // ── 1. COLLECT ALL PHONE NUMBERS ────────────────────────────────────────
 
-    // Build medical note if available
-    const medNote = user.medicalConditions
-      ? `\n⚕️ Medical Info: ${user.medicalConditions}`
-      : "";
+    // Emergency contacts from profile
+    const emergencyPhones: { name: string; phone: string }[] = [];
+    const ec1Phone =
+      user.emergencyContact1Phone || user.emergency1 || "";
+    const ec1Name =
+      user.emergencyContact1Name || user.emergency1Name || "Emergency Contact 1";
+    const ec2Phone =
+      user.emergencyContact2Phone || user.emergency2 || "";
+    const ec2Name =
+      user.emergencyContact2Name || user.emergency2Name || "Emergency Contact 2";
 
-    const message = encodeURIComponent(
-      `🚨 EMERGENCY SOS ALERT - RoadSOS\n\n` +
-      `👤 Name: ${user.fullName}\n` +
-      `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
-      `📞 Phone: ${user.phone}\n\n` +
-      (mapsLink
-        ? `📍 Live Location:\n${mapsLink}\n\n`
-        : `⚠️ Location unavailable — please call immediately.\n\n`) +
-      `🏥 Nearest Hospital: ${nearestHospital}${hospitalDistance ? ` (${hospitalDistance})` : ""}\n\n` +
-      `⏰ Time: ${currentTime}\n\n` +
-      `Please respond immediately. This is an emergency.`
-    );
+    if (ec1Phone) emergencyPhones.push({ name: ec1Name, phone: ec1Phone });
+    if (ec2Phone) emergencyPhones.push({ name: ec2Name, phone: ec2Phone });
 
-    window.open(`https://wa.me/?text=${message}`, "_blank");
+    // All contacts from contacts page (deduplicated)
+    const allPhones: { name: string; phone: string }[] = [
+      ...emergencyPhones,
+      ...allContacts.filter(
+        (c) =>
+          c.phone &&
+          c.phone !== ec1Phone &&
+          c.phone !== ec2Phone
+      ),
+    ];
+
+    // ── 2. SMS TO ALL CONTACTS ───────────────────────────────────────────────
+    // sms: URI with comma-separated numbers sends to all on most Android dialers.
+    // iOS opens compose with first number — unavoidable platform limitation.
+    if (allPhones.length > 0) {
+      const numbers = allPhones.map((c) => c.phone).join(",");
+      const smsUri = `sms:${numbers}?body=${encodeURIComponent(msgText)}`;
+      window.open(smsUri, "_blank");
+    }
+
+    // ── 3. WHATSAPP TO EACH EMERGENCY CONTACT ───────────────────────────────
+    // Opens directly in their chat — one tap to send per contact.
+    // Delay each open so browser doesn't block multiple popups.
+    emergencyPhones.forEach((contact, i) => {
+      setTimeout(() => {
+        const waNumber = normalisePhone(contact.phone);
+        const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(msgText)}`;
+        window.open(waUrl, "_blank");
+      }, i * 800); // 800 ms gap between each WhatsApp open
+    });
   }
 
-  // FIX: use correct field names from new setup page
-  const contacts = [
-    {
-      name:  user?.emergencyContact1Name  || "Emergency Contact 1",
-      phone: user?.emergencyContact1Phone || "",
-      tag:   "Primary",
-    },
-    {
-      name:  user?.emergencyContact2Name  || "Emergency Contact 2",
-      phone: user?.emergencyContact2Phone || "",
-      tag:   "Secondary",
-    },
-    {
-      name:  "Emergency Services",
-      phone: "112",
-      tag:   "Government",
-    },
+  // ── CONTACTS DISPLAY LIST ─────────────────────────────────────────────────
+  const ec1Phone = user?.emergencyContact1Phone || user?.emergency1 || "";
+  const ec1Name  = user?.emergencyContact1Name  || user?.emergency1Name || "Emergency Contact 1";
+  const ec2Phone = user?.emergencyContact2Phone || user?.emergency2 || "";
+  const ec2Name  = user?.emergencyContact2Name  || user?.emergency2Name || "Emergency Contact 2";
+
+  const displayContacts = [
+    ...(ec1Phone ? [{ name: ec1Name, phone: ec1Phone, tag: "Primary", whatsapp: true }] : []),
+    ...(ec2Phone ? [{ name: ec2Name, phone: ec2Phone, tag: "Secondary", whatsapp: true }] : []),
+    ...allContacts
+      .filter((c) => c.phone && c.phone !== ec1Phone && c.phone !== ec2Phone)
+      .map((c) => ({
+        name: c.name,
+        phone: c.phone,
+        tag: c.relation || "Contact",
+        whatsapp: false,
+      })),
+    { name: "Emergency Services", phone: "112", tag: "Government", whatsapp: false },
   ];
+
+  const smsCount = displayContacts.filter((c) => c.phone !== "112").length;
 
   return (
     <AppShell>
       <ScreenHeader
         title="SOS Alert"
-        subtitle="Live emergency broadcasting system"
+        subtitle="Emergency broadcast system"
       />
 
       <div className="px-5 space-y-4">
@@ -157,7 +296,7 @@ function SOS() {
             onMouseDown={() => setHolding(true)}
             onMouseUp={() => { setHolding(false); sendSOS(); }}
             onTouchStart={() => setHolding(true)}
-            onTouchEnd={() => { setHolding(false); sendSOS(); }}
+            onTouchEnd={(e) => { e.preventDefault(); setHolding(false); sendSOS(); }}
             disabled={!user}
             className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${
               holding ? "scale-95" : "animate-pulse-ring"
@@ -169,19 +308,31 @@ function SOS() {
             </div>
           </button>
 
-          <p className="text-xs text-muted-foreground mt-4">
-            Tap to send WhatsApp alert with live location
-          </p>
+          {/* What will happen */}
+          {!sent && (
+            <div className="mt-4 space-y-1 text-xs text-muted-foreground">
+              <p className="flex items-center justify-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-success" />
+                SMS to {smsCount} contact{smsCount !== 1 ? "s" : ""}
+              </p>
+              {displayContacts.filter((c) => c.whatsapp).length > 0 && (
+                <p className="flex items-center justify-center gap-1.5">
+                  <span className="text-[#25D366] font-bold text-sm">W</span>
+                  WhatsApp to {displayContacts.filter((c) => c.whatsapp).length} emergency contact{displayContacts.filter((c) => c.whatsapp).length !== 1 ? "s" : ""}
+                </p>
+              )}
+            </div>
+          )}
 
           {sent && (
-            <div className="mt-5 space-y-3">
+            <div className="mt-5 space-y-2">
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-success/10 text-success text-sm font-semibold">
                 <Check className="w-4 h-4" />
-                WhatsApp Alert Sent
+                SOS Sent to {smsCount} Contact{smsCount !== 1 ? "s" : ""}
               </div>
               <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Clock3 className="w-3.5 h-3.5" />
-                SOS sent at {time}
+                Sent at {time}
               </div>
             </div>
           )}
@@ -247,11 +398,19 @@ function SOS() {
           </div>
         </div>
 
-        {/* Broadcasting Contacts */}
+        {/* Broadcasting To */}
         <div>
-          <p className="text-sm font-semibold mb-3">Broadcasting To</p>
+          <p className="text-sm font-semibold mb-3">
+            Broadcasting To
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              ({smsCount} will receive SMS
+              {displayContacts.filter((c) => c.whatsapp).length > 0
+                ? ` · ${displayContacts.filter((c) => c.whatsapp).length} via WhatsApp`
+                : ""})
+            </span>
+          </p>
           <div className="space-y-2">
-            {contacts.map((contact, index) => (
+            {displayContacts.map((contact, index) => (
               <div
                 key={index}
                 className="flex items-center gap-3 bg-card border border-border rounded-2xl p-3 shadow-card"
@@ -260,7 +419,12 @@ function SOS() {
                   {contact.name[0]?.toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm truncate">{contact.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-sm truncate">{contact.name}</p>
+                    {contact.whatsapp && (
+                      <span className="text-[10px] font-bold text-[#25D366]">WA</span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {contact.phone || "No number saved"}
                   </p>
@@ -305,7 +469,7 @@ function SOS() {
             <div>
               <p className="font-bold">Emergency Broadcast Ready</p>
               <p className="text-sm text-white/85 mt-1">
-                Your emergency profile, GPS location, and nearest hospital will be shared via WhatsApp when you tap SOS.
+                One tap sends SMS to all your contacts and WhatsApp messages directly to your emergency contacts — with your live location, blood group, and nearest hospital.
               </p>
             </div>
           </div>

@@ -97,6 +97,18 @@ const typeColor: Record<string, string> = {
   showroom:     "#6366f1",
 };
 
+// Human-readable labels for place types
+const typeLabel: Record<string, string> = {
+  hospital:     "Hospital",
+  ambulance:    "Ambulance",
+  police:       "Police Station",
+  mechanic:     "Mechanic / Towing",
+  fire_station: "Fire Station",
+  pharmacy:     "Pharmacy",
+  fuel:         "Fuel Station",
+  showroom:     "Service Centre",
+};
+
 function MapView({
   userLat, userLon, places,
 }: {
@@ -143,7 +155,7 @@ function MapView({
         .bindPopup(`
           <div style="font-family:sans-serif;min-width:140px">
             <b style="font-size:13px">${p.name}</b><br/>
-            <span style="font-size:11px;color:#666;text-transform:capitalize">${p.type.replace("_", " ")}</span><br/>
+            <span style="font-size:11px;color:#666">${typeLabel[p.type] ?? p.type}</span><br/>
             <span style="font-size:11px">${p.distance} km · ${p.eta} ETA</span>
             ${i === 0 ? '<br/><span style="font-size:10px;color:#ef4444;font-weight:bold">★ Best Match</span>' : ""}
           </div>
@@ -179,6 +191,8 @@ function Nearby() {
   const [places, setPlaces]         = useState<NearbyPlace[]>([]);
   const [analysis, setAnalysis]     = useState<AnalysisData | null>(null);
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  // FIX: track the filter label (from home tile) for the subtitle
+  const [filterLabel, setFilterLabel] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -194,6 +208,7 @@ function Nearby() {
         if (tileFilter && filterTypeMap[tileFilter]) {
           // Came from a home tile — build a synthetic analysis
           const mapped = filterTypeMap[tileFilter];
+          setFilterLabel(mapped.label);
           parsedAnalysis = {
             input: mapped.input,
             type: mapped.type,
@@ -237,10 +252,10 @@ function Nearby() {
 
         setPlaces(nearbyPlaces);
 
-        // Cache for offline use
+        // Cache for offline use — slim shape with lat/lon (read by offline.tsx)
         if (nearbyPlaces.length > 0) {
           localStorage.setItem("roadsos-last-places", JSON.stringify(
-            nearbyPlaces.map((p) => ({
+            nearbyPlaces.slice(0, 5).map((p) => ({
               name: p.name,
               type: p.type,
               distance: `${p.distance} km`,
@@ -262,15 +277,18 @@ function Nearby() {
     load();
   }, []);
 
+  // Subtitle: show filter label from tile, or emergency type from analysis
+  const subtitle = filterLabel
+    ? `Showing: ${filterLabel}`
+    : analysis
+    ? `Live routing · ${analysis.type.replace(/_/g, " ").toLowerCase()}`
+    : "Live emergency assistance";
+
   return (
     <AppShell>
       <ScreenHeader
         title="Nearby Services"
-        subtitle={
-          analysis
-            ? `Live routing · ${analysis.type.replace(/_/g, " ").toLowerCase()}`
-            : "Live emergency assistance"
-        }
+        subtitle={subtitle}
       />
 
       {/* Map */}
@@ -291,7 +309,7 @@ function Nearby() {
           {Array.from(new Set(places.map((p) => p.type))).map((t) => (
             <span key={t} className="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded-full bg-card border border-border">
               <span className="w-2.5 h-2.5 rounded-full" style={{ background: typeColor[t] ?? "#6366f1" }} />
-              <span className="capitalize">{t.replace("_", " ")}</span>
+              <span>{typeLabel[t] ?? t}</span>
             </span>
           ))}
           <span className="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded-full bg-card border border-border">
@@ -301,8 +319,23 @@ function Nearby() {
         </div>
       )}
 
-      {/* Active emergency banner */}
-      {analysis && (
+      {/* ── SERVICE COUNT BANNER ── jury criterion */}
+      {!loading && !error && places.length > 0 && (
+        <div className="mx-5 mt-3">
+          <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-primary" />
+              <span className="text-sm font-bold text-primary">
+                {places.length} service{places.length !== 1 ? "s" : ""} found near you
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground font-medium">GPS matched</span>
+          </div>
+        </div>
+      )}
+
+      {/* Active emergency banner — only shown when coming from analysis (not tile) */}
+      {analysis && !filterLabel && (
         <div className="px-5 mt-4">
           <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
             <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -386,9 +419,14 @@ function Nearby() {
                           Best Match
                         </span>
                       )}
+                      {place.isVerified && (
+                        <span className="px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-bold">
+                          ✓ Verified
+                        </span>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 capitalize">
-                      {place.type.replace("_", " ")}
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {typeLabel[place.type] ?? place.type}
                     </p>
                     <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
                       <span className="font-medium">{place.distance} km away</span>

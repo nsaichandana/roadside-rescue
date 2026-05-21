@@ -33,6 +33,8 @@ const chips = [
   "Unconscious",
   "Heart Attack",
   "Robbery",
+  "Two Wheeler",
+  "Head Injury",
 ];
 
 type EmergencyType =
@@ -110,7 +112,7 @@ function detectEmergencyType(input: string): EmergencyType {
     return "Vehicle Breakdown";
   }
 
-  // --- MEDICAL (only clear medical keywords, NOT "accident" alone) ---
+  // --- MEDICAL ---
   if (
     text.includes("heart attack") ||
     text.includes("heart") ||
@@ -138,7 +140,6 @@ function detectEmergencyType(input: string): EmergencyType {
     return "Medical Emergency";
   }
 
-  // "accident" alone without injury keywords → General (nearby will show all services)
   return "General Emergency";
 }
 
@@ -194,7 +195,8 @@ function Emergency() {
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
+    // FIX: en-IN gives much better accuracy for Indian accents vs en-US
+    recognition.lang = "en-IN";
 
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
@@ -212,7 +214,7 @@ function Emergency() {
   }, []);
 
   const startVoiceInput = () => recognitionRef.current?.start();
-  const stopVoiceInput = () => recognitionRef.current?.stop();
+  const stopVoiceInput  = () => recognitionRef.current?.stop();
 
   const handleAnalyze = () => {
     if (!text.trim()) return;
@@ -265,7 +267,7 @@ function Emergency() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={6}
-            placeholder="Describe the emergency situation... (e.g. 'flat tire on highway', 'person unconscious after accident', 'locked out of car')"
+            placeholder="Describe the emergency situation... (e.g. 'flat tire on highway', 'person unconscious after accident', 'bike accident head injury')"
             className="w-full bg-transparent resize-none focus:outline-none text-base placeholder:text-muted-foreground/60"
           />
 
