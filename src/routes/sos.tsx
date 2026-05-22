@@ -11,6 +11,55 @@ import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/count
 
 export const Route = createFileRoute("/sos")({ component: SOS });
 
+// ── Fast2SMS silent send ──────────────────────────────────────────────────────
+// Sends SMS directly via API — zero user interaction required.
+// Falls back to native SMS app if API fails or key is missing.
+
+type SendStatus = {
+  phone: string;
+  name: string;
+  status: "sending" | "sent" | "failed";
+};
+
+async function sendVisFast2SMS(
+  phones: string[],
+  message: string
+): Promise<{ success: string[]; failed: string[] }> {
+  const apiKey = import.meta.env.VITE_FAST2SMS_API_KEY;
+  if (!apiKey) throw new Error("No API key");
+
+  // Fast2SMS accepts comma-separated numbers, strips country code automatically
+  const numbers = phones
+    .map((p) => p.replace(/\D/g, "").replace(/^91/, "").slice(-10))
+    .filter((p) => p.length === 10)
+    .join(",");
+
+  if (!numbers) throw new Error("No valid numbers");
+
+  const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+    method: "POST",
+    headers: {
+      authorization: apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      route: "q",           // quick transactional route
+      message,
+      language: "english",
+      flash: 0,
+      numbers,
+    }),
+  });
+
+  const data = await res.json();
+
+  if (data.return === true) {
+    return { success: phones, failed: [] };
+  } else {
+    throw new Error(data.message ?? "Fast2SMS failed");
+  }
+}
+
 type UserData = {
   fullName: string;
   phone: string;
@@ -74,6 +123,8 @@ function buildMessage(
 function SOS() {
   const [sent, setSent]                       = useState(false);
   const [retryQueued, setRetryQueued]         = useState(false);
+  const [sendStatuses, setSendStatuses]       = useState<SendStatus[]>([]);
+  const [apiSending, setApiSending]           = useState(false);
   const [holding, setHolding]                 = useState(false);
   const [time, setTime]                       = useState("");
   const [loadingLocation, setLoadingLocation] = useState(true);
@@ -263,33 +314,55 @@ function SOS() {
       ),
     ];
 
-    // ── 2. SMS TO ALL CONTACTS ───────────────────────────────────────────────
-    // window.open() blocks sms: URIs — must use location.href or <a> click.
-    // Android: comma-separated numbers opens multi-recipient SMS.
-    // iOS: only supports single number per sms: URI — send sequentially.
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
+    // ── 2. SMS VIA FAST2SMS API — zero user interaction ─────────────────────
     if (allPhones.length > 0) {
-      if (isIOS) {
-        // iOS: open each contact sequentially with delay
-        allPhones.forEach((contact, i) => {
-          setTimeout(() => {
+      // Set all to "sending" state for UI feedback
+      const initialStatuses: SendStatus[] = allPhones.map((c) => ({
+        phone: c.phone,
+        name: c.name,
+        status: "sending",
+      }));
+      setSendStatuses(initialStatuses);
+      setApiSending(true);
+
+      sendVisFast2SMS(allPhones.map((c) => c.phone), msgText)
+        .then(({ success, failed }) => {
+          setSendStatuses(allPhones.map((c) => ({
+            phone: c.phone,
+            name: c.name,
+            status: failed.includes(c.phone) ? "failed" : "sent",
+          })));
+          setApiSending(false);
+        })
+        .catch(() => {
+          // API failed — fall back to native SMS app
+          setApiSending(false);
+          setSendStatuses(allPhones.map((c) => ({
+            phone: c.phone,
+            name: c.name,
+            status: "failed",
+          })));
+          // Native SMS fallback
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+          if (isIOS) {
+            allPhones.forEach((contact, i) => {
+              setTimeout(() => {
+                const a = document.createElement("a");
+                a.href = `sms:${contact.phone}&body=${encodeURIComponent(msgText)}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              }, i * 1000);
+            });
+          } else {
+            const numbers = allPhones.map((c) => c.phone).join(";");
             const a = document.createElement("a");
-            a.href = `sms:${contact.phone}&body=${encodeURIComponent(msgText)}`;
+            a.href = `sms:${numbers}?body=${encodeURIComponent(msgText)}`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-          }, i * 1000);
+          }
         });
-      } else {
-        // Android: comma-separated multi-recipient in one SMS intent
-        const numbers = allPhones.map((c) => c.phone).join(";");
-        const a = document.createElement("a");
-        a.href = `sms:${numbers}?body=${encodeURIComponent(msgText)}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
     }
 
     // ── 3. WHATSAPP TO EACH EMERGENCY CONTACT ───────────────────────────────
@@ -385,12 +458,39 @@ function SOS() {
             <div className="mt-5 space-y-2">
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-success/10 text-success text-sm font-semibold">
                 <Check className="w-4 h-4" />
-                SOS Sent to {smsCount} Contact{smsCount !== 1 ? "s" : ""}
+                SOS Triggered — Sending to {smsCount} Contact{smsCount !== 1 ? "s" : ""}
               </div>
               <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Clock3 className="w-3.5 h-3.5" />
                 Sent at {time}
               </div>
+
+              {/* Per-contact send status */}
+              {sendStatuses.length > 0 && (
+                <div className="mt-3 space-y-1.5 text-left">
+                  {sendStatuses.map((s) => (
+                    <div key={s.phone} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted text-xs">
+                      <span className="flex-1 font-medium truncate">{s.name}</span>
+                      {s.status === "sending" && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Sending...
+                        </span>
+                      )}
+                      {s.status === "sent" && (
+                        <span className="flex items-center gap-1 text-success font-semibold">
+                          <Check className="w-3 h-3" /> Delivered
+                        </span>
+                      )}
+                      {s.status === "failed" && (
+                        <span className="flex items-center gap-1 text-warning-foreground font-semibold">
+                          <AlertTriangle className="w-3 h-3" /> Via SMS app
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {retryQueued && (
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 text-warning-foreground text-xs font-medium">
                   <RefreshCw className="w-3 h-3 animate-spin" />
