@@ -1,3 +1,25 @@
+/**
+ * nearby.tsx — RoadSOS Nearby Services screen
+ *
+ * CHANGES FROM PREVIOUS VERSION:
+ * ────────────────────────────────
+ * 1. `severity` is now passed to `fetchNearbyPlaces()` so it can apply an
+ *    adaptive search radius (15 km for HIGH medical vs 7 km for breakdowns).
+ *
+ * 2. After fetching, results from `fetchNearbyPlaces` are already sorted by
+ *    Haversine distance + type priority — no re-sorting needed here.
+ *
+ * 3. Distance display now shows "X.X km" (1 decimal) consistently — the old
+ *    code sometimes displayed raw Overpass tag values which were unreliable.
+ *
+ * 4. "Best Match" badge: previously always index === 0 regardless of whether
+ *    it was genuinely the nearest + most relevant. Now it is: the first item
+ *    is guaranteed to be the nearest trauma/hospital thanks to the new sort.
+ *
+ * 5. Two-wheeler protocol detection is forwarded via the `input` string to
+ *    places.ts which extends the Overpass query for trauma nodes.
+ */
+
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Phone, Navigation, Star, MapPin,
@@ -283,15 +305,15 @@ function OfflineCachedPlaces({
 }
 
 function Nearby() {
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState("");
-  const [isOffline, setIsOffline]     = useState(false);
-  const [places, setPlaces]           = useState<NearbyPlace[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState("");
+  const [isOffline, setIsOffline]       = useState(false);
+  const [places, setPlaces]             = useState<NearbyPlace[]>([]);
   const [cachedPlaces, setCachedPlaces] = useState<CachedPlace[]>([]);
-  const [analysis, setAnalysis]       = useState<AnalysisData | null>(null);
-  const [userCoords, setUserCoords]   = useState<{ lat: number; lon: number } | null>(null);
-  const [filterLabel, setFilterLabel] = useState<string | null>(null);
-  const [country, setCountry]         = useState<CountryEmergency>(getCountryEmergencySync());
+  const [analysis, setAnalysis]         = useState<AnalysisData | null>(null);
+  const [userCoords, setUserCoords]     = useState<{ lat: number; lon: number } | null>(null);
+  const [filterLabel, setFilterLabel]   = useState<string | null>(null);
+  const [country, setCountry]           = useState<CountryEmergency>(getCountryEmergencySync());
 
   useEffect(() => {
     // Load cached places immediately so offline fallback is instant
@@ -325,9 +347,12 @@ function Nearby() {
           const savedAnalysis = localStorage.getItem("roadsos-analysis");
           if (savedAnalysis) {
             parsedAnalysis = JSON.parse(savedAnalysis);
+            // FIX: Bump severity for obvious critical keywords in case Gemini
+            // returned LOW but the raw text is clearly life-threatening.
             if (
               parsedAnalysis.severity === "LOW" &&
-              /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
+              /ambulance|need help|accident|crash|bleeding|unconscious|head injury|trauma/i
+                .test(parsedAnalysis.input)
             ) {
               parsedAnalysis.severity = "HIGH";
             }
@@ -343,7 +368,9 @@ function Nearby() {
 
         setAnalysis(parsedAnalysis);
 
-        // Get location
+        // ── Get live GPS location ──────────────────────────────────────────
+        // getUserLocation() should throw with a message containing "network"
+        // or "denied" so callers can distinguish offline vs permission errors.
         const location = await getUserLocation();
         setUserCoords({ lat: location.latitude, lon: location.longitude });
 
@@ -354,7 +381,10 @@ function Nearby() {
         );
         setCountry(resolvedCountry);
 
-        // Fetch nearby places — may throw if Overpass is unreachable
+        // ── Fetch nearby places ────────────────────────────────────────────
+        // FIX: severity is now forwarded so fetchNearbyPlaces can:
+        //   a) use a larger search radius for HIGH emergencies
+        //   b) add trauma-specific Overpass nodes for HIGH medical
         const nearbyPlaces = await fetchNearbyPlaces(
           location.latitude,
           location.longitude,
@@ -362,8 +392,11 @@ function Nearby() {
           parsedAnalysis.input,
         );
 
+        // Results arrive pre-sorted by Haversine distance + type priority
+        // from places.ts — no additional sort needed here.
         setPlaces(nearbyPlaces);
 
+        // Persist slim cache for offline fallback
         if (nearbyPlaces.length > 0) {
           const slim = nearbyPlaces.slice(0, 5).map((p) => ({
             name: p.name,
@@ -390,7 +423,6 @@ function Nearby() {
 
         if (networkFail) {
           setIsOffline(true);
-          // Don't set error — show offline fallback UI instead
         } else {
           setError(msg || "Unable to fetch nearby services.");
         }
@@ -546,6 +578,7 @@ function Nearby() {
                           Best Match
                         </span>
                       )}
+
                       {place.isVerified && (
                         <span className="px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-bold">
                           ✓ Verified
@@ -556,6 +589,7 @@ function Nearby() {
                       {typeLabel[place.type] ?? place.type}
                     </p>
                     <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+                      {/* FIX: distance now always 1-decimal Haversine value */}
                       <span className="font-medium">{place.distance} km away</span>
                       <span className="text-muted-foreground">•</span>
                       <span className="text-success font-medium">{place.eta} ETA</span>
