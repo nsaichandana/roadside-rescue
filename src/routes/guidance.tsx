@@ -1,17 +1,20 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Heart, Droplets, Flame, Car, ShieldAlert, Bandage, ChevronDown } from "lucide-react";
 import { useState } from "react";
+import type React from "react";
+import { getCountryEmergencySync } from "@/utils/countryEmergency";
 
 export const Route = createFileRoute("/guidance")({ component: Guidance });
 
-const cards = [
+function getCards(allEmergency: string, ambulance: string, police: string, fire: string) {
+  return [
   {
     icon: Heart,
     label: "CPR Steps",
     caption: "Adult & infant",
     tone: "rose",
     steps: [
-      "Call 112 immediately before starting CPR.",
+      `Call ${allEmergency} immediately before starting CPR.`,
       "Lay the person flat on their back on a firm surface.",
       "Tilt their head back gently and lift the chin to open the airway.",
       "Check for breathing for no more than 10 seconds.",
@@ -35,7 +38,7 @@ const cards = [
       "Maintain pressure continuously for at least 10–15 minutes.",
       "For severe limb bleeding: apply a tourniquet 5–7 cm above the wound.",
       "Note the exact time the tourniquet was applied.",
-      "Call 108 immediately for all serious bleeding.",
+      `Call ${ambulance} immediately for all serious bleeding.`,
     ],
     warning: "Do NOT use a tourniquet on the neck, chest, or abdomen.",
   },
@@ -69,7 +72,7 @@ const cards = [
       "Cover loosely with a clean non-fluffy material (cling film or clean plastic bag).",
       "Do NOT burst blisters — this increases infection risk.",
       "For chemical burns: brush off dry chemicals first, then flush with lots of water.",
-      "Call 108 for burns larger than the victim's palm, or burns to face/hands/genitals.",
+      `Call ${ambulance} for burns larger than the victim's palm, or burns to face/hands/genitals.`,
     ],
     warning: "Electrical burns always need emergency care — internal damage may not be visible.",
   },
@@ -81,7 +84,7 @@ const cards = [
     steps: [
       "Park your vehicle safely at least 50 metres away with hazard lights on.",
       "Do NOT approach if there is fire, leaking fuel, or unstable vehicles.",
-      "Call 112 immediately. State the exact location, number of vehicles, visible injuries.",
+      `Call ${allEmergency} immediately. State the exact location, number of vehicles, visible injuries.`,
       "Turn off ignition of crashed vehicles if safely reachable.",
       "Do NOT move an injured person unless there is immediate danger (fire/flood).",
       "Keep the victim still, warm, and conscious by talking to them.",
@@ -97,7 +100,7 @@ const cards = [
     tone: "violet",
     steps: [
       "Recognize shock: pale/grey skin, rapid weak pulse, fast shallow breathing, confusion, cold clammy skin.",
-      "Call 112 immediately — shock is life-threatening.",
+      `Call ${allEmergency} immediately — shock is life-threatening.`,
       "Lay the person flat on their back on the ground.",
       "Raise their legs about 30 cm (unless leg/spinal injury suspected).",
       "Keep them warm with a blanket. Do NOT overheat.",
@@ -107,7 +110,8 @@ const cards = [
     ],
     warning: "Do NOT raise legs if there is a head injury, breathing difficulty, or broken leg.",
   },
-];
+  ];
+}
 
 const toneMap: Record<string, { gradient: string; badge: string; step: string }> = {
   rose:   { gradient: "from-rose-500 to-rose-600",     badge: "bg-rose-100 text-rose-700",     step: "bg-rose-500 text-white" },
@@ -118,9 +122,18 @@ const toneMap: Record<string, { gradient: string; badge: string; step: string }>
   violet: { gradient: "from-violet-500 to-violet-600", badge: "bg-violet-100 text-violet-700", step: "bg-violet-500 text-white" },
 };
 
+type CardProps = {
+  icon: React.ElementType;
+  label: string;
+  caption: string;
+  tone: string;
+  steps: string[];
+  warning: string;
+};
+
 function GuidanceCard({
   icon: Icon, label, caption, tone, steps, warning,
-}: (typeof cards)[0]) {
+}: CardProps) {
   const [open, setOpen] = useState(false);
   const t = toneMap[tone];
 
@@ -173,6 +186,8 @@ function GuidanceCard({
 
 function Guidance() {
   const navigate = useNavigate();
+  const c = getCountryEmergencySync();
+  const cards = getCards(c.allEmergency, c.ambulance, c.police, c.fire);
 
   return (
     <div className="min-h-screen bg-background pb-10">
@@ -205,7 +220,7 @@ function Guidance() {
             {[
               "Park safely, turn on hazard lights",
               "Check for danger before approaching victims",
-              "Call 112 with exact location",
+              `Call ${c.allEmergency} with exact location`,
               "Apply first aid only if trained",
               "Do not move severely injured persons",
             ].map((s, i) => (
