@@ -1,278 +1,547 @@
-/**
- * countryEmergency.ts
- *
- * Detects the user's country from GPS coordinates via Nominatim reverse-geocode
- * and returns the correct emergency numbers + dialling prefix for that country.
- *
- * Designed to work offline-first:
- *  1. Try Nominatim (network)
- *  2. Fall back to cached country (localStorage)
- *  3. Fall back to India defaults (most common deployment region)
- */
+import { createFileRoute } from "@tanstack/react-router";
+import {
+  Siren, MapPin, Check, Phone, Clock3,
+  ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
+  MessageSquare, RefreshCw,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { AppShell, ScreenHeader } from "@/components/AppShell";
+import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
+import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/countryEmergency";
 
-export type CountryEmergency = {
-  /** ISO 3166-1 alpha-2 code, e.g. "IN", "US", "GB" */
-  countryCode: string;
-  countryName: string;
-  /** International dialling prefix WITHOUT '+', e.g. "91", "1", "44" */
-  dialPrefix: string;
-  /** Number of local digits after the country code (used for WhatsApp normalisation) */
-  localDigits: number;
-  /** Single all-purpose emergency number, or the most important one */
-  allEmergency: string;
-  ambulance: string;
-  police: string;
-  fire: string;
-  /** Optional: highway / roadside helpline */
-  highway?: string;
-  /** Human-readable label for highway number */
-  highwayLabel?: string;
+export const Route = createFileRoute("/sos")({ component: SOS });
+
+type UserData = {
+  fullName: string;
+  phone: string;
+  bloodGroup: string;
+  medicalConditions?: string;
+  emergencyContact1Name?: string;
+  emergencyContact1Phone?: string;
+  emergencyContact2Name?: string;
+  emergencyContact2Phone?: string;
+  // legacy fallback
+  emergency1Name?: string;
+  emergency1?: string;
+  emergency2Name?: string;
+  emergency2?: string;
 };
 
-// ─── Database ─────────────────────────────────────────────────────────────────
-// Sources: ITU, Wikipedia "Emergency telephone number", national govts.
-// Covers countries most likely for IIT Madras hackathon + global demo.
-
-const COUNTRY_DB: Record<string, CountryEmergency> = {
-  IN: {
-    countryCode: "IN", countryName: "India",
-    dialPrefix: "91", localDigits: 10,
-    allEmergency: "112", ambulance: "108", police: "100", fire: "101",
-    highway: "1033", highwayLabel: "Highway",
-  },
-  US: {
-    countryCode: "US", countryName: "United States",
-    dialPrefix: "1", localDigits: 10,
-    allEmergency: "911", ambulance: "911", police: "911", fire: "911",
-  },
-  GB: {
-    countryCode: "GB", countryName: "United Kingdom",
-    dialPrefix: "44", localDigits: 10,
-    allEmergency: "999", ambulance: "999", police: "999", fire: "999",
-    highway: "0300 123 5000", highwayLabel: "National Highways",
-  },
-  AU: {
-    countryCode: "AU", countryName: "Australia",
-    dialPrefix: "61", localDigits: 9,
-    allEmergency: "000", ambulance: "000", police: "000", fire: "000",
-    highway: "13 27 01", highwayLabel: "Roadside Assist",
-  },
-  CA: {
-    countryCode: "CA", countryName: "Canada",
-    dialPrefix: "1", localDigits: 10,
-    allEmergency: "911", ambulance: "911", police: "911", fire: "911",
-  },
-  DE: {
-    countryCode: "DE", countryName: "Germany",
-    dialPrefix: "49", localDigits: 10,
-    allEmergency: "112", ambulance: "112", police: "110", fire: "112",
-    highway: "0800 000 6060", highwayLabel: "ADAC Breakdown",
-  },
-  FR: {
-    countryCode: "FR", countryName: "France",
-    dialPrefix: "33", localDigits: 9,
-    allEmergency: "112", ambulance: "15", police: "17", fire: "18",
-    highway: "3607", highwayLabel: "ASF Autoroute",
-  },
-  IT: {
-    countryCode: "IT", countryName: "Italy",
-    dialPrefix: "39", localDigits: 10,
-    allEmergency: "112", ambulance: "118", police: "113", fire: "115",
-    highway: "1518", highwayLabel: "Autostrade",
-  },
-  ES: {
-    countryCode: "ES", countryName: "Spain",
-    dialPrefix: "34", localDigits: 9,
-    allEmergency: "112", ambulance: "112", police: "091", fire: "080",
-  },
-  NL: {
-    countryCode: "NL", countryName: "Netherlands",
-    dialPrefix: "31", localDigits: 9,
-    allEmergency: "112", ambulance: "112", police: "112", fire: "112",
-  },
-  JP: {
-    countryCode: "JP", countryName: "Japan",
-    dialPrefix: "81", localDigits: 10,
-    allEmergency: "110", ambulance: "119", police: "110", fire: "119",
-  },
-  CN: {
-    countryCode: "CN", countryName: "China",
-    dialPrefix: "86", localDigits: 11,
-    allEmergency: "120", ambulance: "120", police: "110", fire: "119",
-  },
-  SG: {
-    countryCode: "SG", countryName: "Singapore",
-    dialPrefix: "65", localDigits: 8,
-    allEmergency: "999", ambulance: "995", police: "999", fire: "995",
-  },
-  MY: {
-    countryCode: "MY", countryName: "Malaysia",
-    dialPrefix: "60", localDigits: 9,
-    allEmergency: "999", ambulance: "999", police: "999", fire: "994",
-    highway: "1800 88 7723", highwayLabel: "PLUS Highway",
-  },
-  AE: {
-    countryCode: "AE", countryName: "UAE",
-    dialPrefix: "971", localDigits: 9,
-    allEmergency: "999", ambulance: "998", police: "999", fire: "997",
-  },
-  SA: {
-    countryCode: "SA", countryName: "Saudi Arabia",
-    dialPrefix: "966", localDigits: 9,
-    allEmergency: "911", ambulance: "911", police: "911", fire: "998",
-  },
-  ZA: {
-    countryCode: "ZA", countryName: "South Africa",
-    dialPrefix: "27", localDigits: 9,
-    allEmergency: "10177", ambulance: "10177", police: "10111", fire: "10177",
-  },
-  BR: {
-    countryCode: "BR", countryName: "Brazil",
-    dialPrefix: "55", localDigits: 11,
-    allEmergency: "192", ambulance: "192", police: "190", fire: "193",
-    highway: "0800 726 7786", highwayLabel: "PRF Highway",
-  },
-  NG: {
-    countryCode: "NG", countryName: "Nigeria",
-    dialPrefix: "234", localDigits: 10,
-    allEmergency: "112", ambulance: "112", police: "112", fire: "112",
-  },
-  PK: {
-    countryCode: "PK", countryName: "Pakistan",
-    dialPrefix: "92", localDigits: 10,
-    allEmergency: "1122", ambulance: "1122", police: "15", fire: "16",
-  },
-  BD: {
-    countryCode: "BD", countryName: "Bangladesh",
-    dialPrefix: "880", localDigits: 10,
-    allEmergency: "999", ambulance: "199", police: "999", fire: "199",
-  },
-  NP: {
-    countryCode: "NP", countryName: "Nepal",
-    dialPrefix: "977", localDigits: 9,
-    allEmergency: "100", ambulance: "102", police: "100", fire: "101",
-  },
-  LK: {
-    countryCode: "LK", countryName: "Sri Lanka",
-    dialPrefix: "94", localDigits: 9,
-    allEmergency: "119", ambulance: "110", police: "119", fire: "111",
-  },
-  // EU catch-all — 112 is the pan-European standard
-  __EU: {
-    countryCode: "__EU", countryName: "Europe",
-    dialPrefix: "0", localDigits: 9,
-    allEmergency: "112", ambulance: "112", police: "112", fire: "112",
-  },
+type SavedContact = {
+  id: string;
+  name: string;
+  phone: string;
+  relation?: string;
 };
 
-// EU members not individually listed above — all use 112
-const EU_CODES = new Set([
-  "AT","BE","BG","HR","CY","CZ","DK","EE","FI","GR",
-  "HU","IE","LV","LT","LU","MT","PL","PT","RO","SK",
-  "SI","SE","NO","IS","LI","CH",
-]);
+type LocationData = {
+  latitude: number;
+  longitude: number;
+};
 
-/** India is the global fallback */
-export const INDIA_EMERGENCY = COUNTRY_DB["IN"]!;
-
-// ─── localStorage cache ────────────────────────────────────────────────────────
-
-const CACHE_KEY = "roadsos-country";
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-function saveCountryCache(info: CountryEmergency) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ ...info, ts: Date.now() }));
-  } catch { /* ignore */ }
+/** Normalise phone using detected country prefix for wa.me */
+function normalisePhone(raw: string): string {
+  return normalisePhoneForCountry(raw, getCountryEmergencySync());
 }
 
-function loadCountryCache(): CountryEmergency | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (Date.now() - (parsed.ts ?? 0) > CACHE_TTL) return null;
-    // Validate it has the required fields
-    if (parsed.allEmergency && parsed.dialPrefix) return parsed as CountryEmergency;
-  } catch { /* ignore */ }
-  return null;
-}
-
-// ─── Nominatim reverse-geocode for country ────────────────────────────────────
-
-async function fetchCountryCode(lat: number, lon: number): Promise<string | null> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=3`,
-      { headers: { "Accept-Language": "en" }, signal: controller.signal }
-    );
-    clearTimeout(timer);
-    const data = await res.json();
-    return data?.address?.country_code?.toUpperCase() ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/**
- * Resolves the emergency numbers for the country at `lat, lon`.
- * Order: cache → Nominatim → India default
- */
-export async function getCountryEmergency(
-  lat: number,
-  lon: number
-): Promise<CountryEmergency> {
-  // 1. Try cache first (works offline)
-  const cached = loadCountryCache();
-  if (cached) return cached;
-
-  // 2. Try Nominatim
-  const code = await fetchCountryCode(lat, lon);
-  if (code) {
-    let info = COUNTRY_DB[code] ?? null;
-    if (!info && EU_CODES.has(code)) info = { ...COUNTRY_DB["__EU"]!, countryCode: code };
-    if (info) {
-      saveCountryCache(info);
-      return info;
-    }
-  }
-
-  // 3. Fallback: India
-  return INDIA_EMERGENCY;
-}
-
-/**
- * Synchronous lookup from cache only — for render-time use.
- * Returns India if cache is empty.
- */
-export function getCountryEmergencySync(): CountryEmergency {
-  return loadCountryCache() ?? INDIA_EMERGENCY;
-}
-
-/**
- * Normalise a local phone number to E.164 for WhatsApp wa.me links.
- * Uses the country's dialPrefix + expected localDigits to decide whether
- * a prefix is already present.
- */
-export function normalisePhoneForCountry(
-  raw: string,
-  country: CountryEmergency
+/** Build the SOS message text (plain, NOT encoded) */
+function buildMessage(
+  user: UserData,
+  location: LocationData | null,
+  nearestHospital: string,
+  time: string
 ): string {
-  const digits = raw.replace(/\D/g, "");
-  const { dialPrefix, localDigits } = country;
+  const mapsLink = location
+    ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
+    : null;
+  const medNote = user.medicalConditions
+    ? `\n⚕️ Medical Info: ${user.medicalConditions}`
+    : "";
+  return (
+    `🚨 EMERGENCY SOS — RoadSOS\n\n` +
+    `👤 Name: ${user.fullName}\n` +
+    `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
+    `📞 Phone: ${user.phone}\n\n` +
+    (mapsLink
+      ? `📍 Live Location:\n${mapsLink}\n\n`
+      : `⚠️ Location unavailable — please call immediately.\n\n`) +
+    `🏥 Nearest Help: ${nearestHospital}\n` +
+    `⏰ Time: ${time}\n\n` +
+    `Please respond immediately. This is an emergency.`
+  );
+}
 
-  // Already has country prefix
-  if (digits.startsWith(dialPrefix) && digits.length === dialPrefix.length + localDigits) {
-    return digits;
+function SOS() {
+  const [sent, setSent]                       = useState(false);
+  const [retryQueued, setRetryQueued]         = useState(false);
+  const [holding, setHolding]                 = useState(false);
+  const [time, setTime]                       = useState("");
+  const [loadingLocation, setLoadingLocation] = useState(true);
+  const [locationError, setLocationError]     = useState("");
+  const [location, setLocation]               = useState<LocationData | null>(null);
+  const [user, setUser]                       = useState<UserData | null>(null);
+  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
+  const peakWarning = getPeakHourWarning();
+
+  useEffect(() => {
+    // Load profile
+    const savedUser = localStorage.getItem("roadsos-user");
+    if (savedUser) {
+      try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
+    }
+
+    // Load all saved contacts from contacts page
+    const savedContacts = localStorage.getItem("roadsos-contacts");
+    if (savedContacts) {
+      try { setAllContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
+    }
+
+    fetchLocation();
+
+    // Retry queue: if a previous SOS was queued while offline, retry now
+    const queued = localStorage.getItem("roadsos-sos-queue");
+    if (queued && navigator.onLine) {
+      setRetryQueued(true);
+      localStorage.removeItem("roadsos-sos-queue");
+    }
+
+    // Listen for coming back online
+    function handleOnline() {
+      const q = localStorage.getItem("roadsos-sos-queue");
+      if (q) {
+        setRetryQueued(true);
+        localStorage.removeItem("roadsos-sos-queue");
+        // Re-trigger SOS send automatically
+        try {
+          const qd = JSON.parse(q);
+          if (qd.waUrl) window.open(qd.waUrl, "_blank");
+        } catch { /* ignore */ }
+      }
+    }
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
+  function fetchLocation() {
+    if (!navigator.geolocation) {
+      setLocationError("GPS not supported on this device.");
+      setLoadingLocation(false);
+      return;
+    }
+    // Stage 1: quick low-accuracy fix (fast, works indoors)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+        setLoadingLocation(false);
+        // Stage 2: silently upgrade to high-accuracy
+        navigator.geolocation.getCurrentPosition(
+          (precise) => {
+            setLocation({ latitude: precise.coords.latitude, longitude: precise.coords.longitude });
+          },
+          () => { /* already have coarse location — ignore */ },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+      },
+      () => {
+        // Fallback 1: try roadsos-last-location (written by trip.tsx)
+        let recovered = false;
+        const lastLoc = localStorage.getItem("roadsos-last-location");
+        if (lastLoc) {
+          try {
+            const d = JSON.parse(lastLoc);
+            if (d?.lat && d?.lon) {
+              setLocation({ latitude: d.lat, longitude: d.lon });
+              recovered = true;
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Fallback 2: first item in roadsos-last-places array has lat/lon
+        if (!recovered) {
+          const cachedPlaces = localStorage.getItem("roadsos-last-places");
+          if (cachedPlaces) {
+            try {
+              const places = JSON.parse(cachedPlaces);
+              // nearby.tsx writes the search origin as first element or
+              // stores lat/lon at array level depending on version — check both
+              if (Array.isArray(places) && places[0]?.lat && places[0]?.lon) {
+                setLocation({ latitude: places[0].lat, longitude: places[0].lon });
+                recovered = true;
+              } else if (!Array.isArray(places) && places?.lat && places?.lon) {
+                setLocation({ latitude: places.lat, longitude: places.lon });
+                recovered = true;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+
+        // Fallback 3: roadsos-trip-origin written by trip.tsx
+        if (!recovered) {
+          const tripOrigin = localStorage.getItem("roadsos-trip-origin");
+          if (tripOrigin) {
+            try {
+              const d = JSON.parse(tripOrigin);
+              if (d?.lat && d?.lon) {
+                setLocation({ latitude: d.lat, longitude: d.lon });
+                recovered = true;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+
+        setLocationError(
+          recovered
+            ? "Live GPS unavailable — using last known location."
+            : "Location unavailable — please share your location manually."
+        );
+        setLoadingLocation(false);
+      },
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+    );
   }
-  // Just local digits
-  if (digits.length === localDigits) {
-    return dialPrefix + digits;
+
+  function sendSOS() {
+    if (!user) return;
+
+    const currentTime = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    setTime(currentTime);
+    setSent(true);
+
+    // If offline — queue for retry when connection returns
+    if (!navigator.onLine) {
+      localStorage.setItem("roadsos-sos-queue", JSON.stringify({
+        ts: currentTime,
+        userId: user.fullName,
+        queued: true,
+      }));
+      setRetryQueued(true);
+      // Still attempt SMS (works offline on Android via native SMS app)
+    }
+
+    // Get nearest hospital from cache
+    const cachedPlaces = localStorage.getItem("roadsos-last-places");
+    let nearestHospital = "Nearest emergency service";
+    if (cachedPlaces) {
+      try {
+        const places = JSON.parse(cachedPlaces);
+        if (Array.isArray(places) && places.length > 0) {
+          const dist = places[0].distance ? ` (${places[0].distance})` : "";
+          nearestHospital = `${places[0].name}${dist}`;
+        }
+      } catch { /* ignore */ }
+    }
+
+    const msgText = buildMessage(user, location, nearestHospital, currentTime);
+
+    // ── 1. COLLECT ALL PHONE NUMBERS ────────────────────────────────────────
+
+    // Emergency contacts from profile
+    const emergencyPhones: { name: string; phone: string }[] = [];
+    const ec1Phone =
+      user.emergencyContact1Phone || user.emergency1 || "";
+    const ec1Name =
+      user.emergencyContact1Name || user.emergency1Name || "Emergency Contact 1";
+    const ec2Phone =
+      user.emergencyContact2Phone || user.emergency2 || "";
+    const ec2Name =
+      user.emergencyContact2Name || user.emergency2Name || "Emergency Contact 2";
+
+    if (ec1Phone) emergencyPhones.push({ name: ec1Name, phone: ec1Phone });
+    if (ec2Phone) emergencyPhones.push({ name: ec2Name, phone: ec2Phone });
+
+    // All contacts from contacts page (deduplicated)
+    const allPhones: { name: string; phone: string }[] = [
+      ...emergencyPhones,
+      ...allContacts.filter(
+        (c) =>
+          c.phone &&
+          c.phone !== ec1Phone &&
+          c.phone !== ec2Phone
+      ),
+    ];
+
+    // ── 2. SMS TO ALL CONTACTS ───────────────────────────────────────────────
+    // window.open() blocks sms: URIs — must use location.href or <a> click.
+    // Android: comma-separated numbers opens multi-recipient SMS.
+    // iOS: only supports single number per sms: URI — send sequentially.
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+    if (allPhones.length > 0) {
+      if (isIOS) {
+        // iOS: open each contact sequentially with delay
+        allPhones.forEach((contact, i) => {
+          setTimeout(() => {
+            const a = document.createElement("a");
+            a.href = `sms:${contact.phone}&body=${encodeURIComponent(msgText)}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }, i * 1000);
+        });
+      } else {
+        // Android: comma-separated multi-recipient in one SMS intent
+        const numbers = allPhones.map((c) => c.phone).join(";");
+        const a = document.createElement("a");
+        a.href = `sms:${numbers}?body=${encodeURIComponent(msgText)}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    }
+
+    // ── 3. WHATSAPP TO EACH EMERGENCY CONTACT ───────────────────────────────
+    // First contact uses location.href (always works, within user gesture).
+    // Subsequent contacts use window.open with delay.
+    emergencyPhones.forEach((contact, i) => {
+      const waNumber = normalisePhone(contact.phone);
+      const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(msgText)}`;
+      if (i === 0) {
+        // Delay slightly so SMS intent fires first
+        setTimeout(() => { window.location.href = waUrl; }, 500);
+      } else {
+        setTimeout(() => { window.open(waUrl, "_blank"); }, i * 1200);
+      }
+    });
   }
-  // Can't confidently normalise — return as-is (WA handles many formats)
-  return digits;
+
+  // ── CONTACTS DISPLAY LIST ─────────────────────────────────────────────────
+  const ec1Phone = user?.emergencyContact1Phone || user?.emergency1 || "";
+  const ec1Name  = user?.emergencyContact1Name  || user?.emergency1Name || "Emergency Contact 1";
+  const ec2Phone = user?.emergencyContact2Phone || user?.emergency2 || "";
+  const ec2Name  = user?.emergencyContact2Name  || user?.emergency2Name || "Emergency Contact 2";
+
+  const displayContacts = [
+    ...(ec1Phone ? [{ name: ec1Name, phone: ec1Phone, tag: "Primary", whatsapp: true }] : []),
+    ...(ec2Phone ? [{ name: ec2Name, phone: ec2Phone, tag: "Secondary", whatsapp: true }] : []),
+    ...allContacts
+      .filter((c) => c.phone && c.phone !== ec1Phone && c.phone !== ec2Phone)
+      .map((c) => ({
+        name: c.name,
+        phone: c.phone,
+        tag: c.relation || "Contact",
+        whatsapp: false,
+      })),
+    { name: "Emergency Services", phone: getCountryEmergencySync().allEmergency, tag: "Government", whatsapp: false },
+  ];
+
+  const govNumber = getCountryEmergencySync().allEmergency;
+  const smsCount = displayContacts.filter((c) => c.phone !== govNumber).length;
+
+  return (
+    <AppShell>
+      <ScreenHeader
+        title="SOS Alert"
+        subtitle="Emergency broadcast system"
+      />
+
+      <div className="px-5 space-y-4">
+
+        {/* Peak Hour Warning */}
+        {peakWarning && (
+          <div className="bg-warning/15 border border-warning/30 rounded-2xl p-3 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-warning-foreground mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-warning-foreground font-medium">{peakWarning}</p>
+          </div>
+        )}
+
+        {/* SOS Button */}
+        <div className="rounded-3xl bg-card border border-border p-6 shadow-card text-center">
+          <button
+            onMouseDown={() => setHolding(true)}
+            onMouseUp={() => { setHolding(false); sendSOS(); }}
+            onTouchStart={() => setHolding(true)}
+            onTouchEnd={(e) => { e.preventDefault(); setHolding(false); sendSOS(); }}
+            disabled={!user}
+            className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${
+              holding ? "scale-95" : "animate-pulse-ring"
+            } disabled:opacity-50`}
+          >
+            <div className="flex flex-col items-center gap-2">
+              <Siren className="w-10 h-10" />
+              <span>SEND SOS</span>
+            </div>
+          </button>
+
+          {/* What will happen */}
+          {!sent && (
+            <div className="mt-4 space-y-1 text-xs text-muted-foreground">
+              <p className="flex items-center justify-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-success" />
+                SMS to {smsCount} contact{smsCount !== 1 ? "s" : ""}
+              </p>
+              {displayContacts.filter((c) => c.whatsapp).length > 0 && (
+                <p className="flex items-center justify-center gap-1.5">
+                  <span className="text-[#25D366] font-bold text-sm">W</span>
+                  WhatsApp to {displayContacts.filter((c) => c.whatsapp).length} emergency contact{displayContacts.filter((c) => c.whatsapp).length !== 1 ? "s" : ""}
+                </p>
+              )}
+            </div>
+          )}
+
+          {sent && (
+            <div className="mt-5 space-y-2">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-success/10 text-success text-sm font-semibold">
+                <Check className="w-4 h-4" />
+                SOS Sent to {smsCount} Contact{smsCount !== 1 ? "s" : ""}
+              </div>
+              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                <Clock3 className="w-3.5 h-3.5" />
+                Sent at {time}
+              </div>
+              {retryQueued && (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 text-warning-foreground text-xs font-medium">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  WhatsApp queued — will send when online
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Emergency Profile */}
+        <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <ShieldAlert className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Emergency Profile</p>
+                <p className="text-xs text-muted-foreground">{user?.fullName || "Unknown User"}</p>
+                {user?.medicalConditions && (
+                  <p className="text-xs text-warning-foreground mt-0.5">⚠️ {user.medicalConditions}</p>
+                )}
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Blood Group</p>
+              <p className="font-bold text-sm text-primary">{user?.bloodGroup || "--"}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Location */}
+        <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
+                <MapPin className="w-5 h-5 text-success" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Live GPS Location</p>
+                {loadingLocation ? (
+                  <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Fetching live coordinates...
+                  </div>
+                ) : location ? (
+                  <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                    <p>Lat: {location.latitude.toFixed(6)}</p>
+                    <p>Long: {location.longitude.toFixed(6)}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-destructive mt-1">{locationError}</p>
+                )}
+              </div>
+            </div>
+            {location && (
+              <a
+                href={`https://www.google.com/maps?q=${location.latitude},${location.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                Open
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* Broadcasting To */}
+        <div>
+          <p className="text-sm font-semibold mb-3">
+            Broadcasting To
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              ({smsCount} will receive SMS
+              {displayContacts.filter((c) => c.whatsapp).length > 0
+                ? ` · ${displayContacts.filter((c) => c.whatsapp).length} via WhatsApp`
+                : ""})
+            </span>
+          </p>
+          <div className="space-y-2">
+            {displayContacts.map((contact, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-3 bg-card border border-border rounded-2xl p-3 shadow-card"
+              >
+                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm">
+                  {contact.name[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-sm truncate">{contact.name}</p>
+                    {contact.whatsapp && (
+                      <span className="text-[10px] font-bold text-[#25D366]">WA</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {contact.phone || "No number saved"}
+                  </p>
+                </div>
+                <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full bg-accent text-accent-foreground flex-shrink-0">
+                  {contact.tag}
+                </span>
+                <a
+                  href={`tel:${contact.phone || getCountryEmergencySync().allEmergency}`}
+                  className="w-9 h-9 rounded-full bg-success/10 text-success flex items-center justify-center flex-shrink-0"
+                >
+                  <Phone className="w-4 h-4" />
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick Emergency Numbers */}
+        <div className="grid grid-cols-4 gap-2">
+          {(() => {
+            const c = getCountryEmergencySync();
+            return [
+              { label: "Emergency", num: c.allEmergency },
+              { label: "Ambulance", num: c.ambulance },
+              { label: "Police",    num: c.police },
+              { label: c.highwayLabel ?? "Highway", num: c.highway ?? c.police },
+            ];
+          })().map((e) => (
+            <a
+              key={e.num}
+              href={`tel:${e.num}`}
+              className="bg-card border border-border rounded-2xl p-3 text-center shadow-card"
+            >
+              <p className="text-xl font-black text-primary">{e.num}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">{e.label}</p>
+            </a>
+          ))}
+        </div>
+
+        {/* Status Banner */}
+        <div className="bg-gradient-emergency text-emergency-foreground rounded-2xl p-5 shadow-emergency mb-2">
+          <div className="flex items-start gap-3">
+            <HeartPulse className="w-6 h-6 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-bold">Emergency Broadcast Ready</p>
+              <p className="text-sm text-white/85 mt-1">
+                One tap sends SMS to all your contacts and WhatsApp messages directly to your emergency contacts — with your live location, blood group, and nearest hospital.
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </AppShell>
+  );
 }

@@ -1,6 +1,12 @@
 // ─── Emergency Intelligence Layer ─────────────────────────────────────────────
 // Lightweight rule-based emergency intelligence for RoadSOS
-// Used across: analysis.tsx, sos.tsx, nearby.tsx, home.tsx
+// All emergency numbers are resolved from countryEmergency.ts at runtime —
+// no India-specific numbers are hardcoded here.
+
+import {
+  type CountryEmergency,
+  getCountryEmergencySync,
+} from "./countryEmergency";
 
 export type EmergencySeverity = "Critical" | "High" | "Moderate" | "Low";
 
@@ -81,40 +87,57 @@ export function detectPrimaryRisk(input: string, type: string): string {
   return "Multiple Trauma Risk";
 }
 
-export function detectImmediateAction(input: string, type: string): string {
+/**
+ * Returns the most appropriate call-first number for this emergency,
+ * using country-specific numbers from the cached CountryEmergency profile.
+ */
+export function getCallFirst(
+  type: string,
+  input: string,
+  country?: CountryEmergency,
+): string {
+  const c = country ?? getCountryEmergencySync();
+  const lower = input.toLowerCase();
+
+  if (lower.includes("fire") || lower.includes("burn")) return c.fire;
+  if (type === "Security Emergency") return c.police;
+  if (type === "Vehicle Breakdown") return c.highway ?? c.police;
+  // Medical / General → ambulance
+  return c.ambulance;
+}
+
+export function detectImmediateAction(
+  input: string,
+  type: string,
+  country?: CountryEmergency,
+): string {
+  const c = country ?? getCountryEmergencySync();
   const lower = input.toLowerCase();
   const isTwoWheeler = detectTwoWheelerRisk(input);
 
   if (lower.includes("fire") || lower.includes("burn")) {
-    return "Evacuate area immediately. Do not use water on electrical fires. Call 101.";
+    return `Evacuate area immediately. Do not use water on electrical fires. Call ${c.fire}.`;
   }
   if (lower.includes("heart") || lower.includes("cardiac")) {
-    return "Begin CPR if trained. Do not give water or food. Call 108 immediately.";
+    return `Begin CPR if trained. Do not give water or food. Call ${c.ambulance} immediately.`;
   }
   if (lower.includes("bleeding")) {
-    return "Apply firm pressure to wound. Do not remove embedded objects. Call 108.";
+    return `Apply firm pressure to wound. Do not remove embedded objects. Call ${c.ambulance}.`;
   }
   if (isTwoWheeler) {
-    return "Do NOT remove helmet. Do not move victim. Keep airway clear. Call 108.";
+    return `Do NOT remove helmet. Do not move victim. Keep airway clear. Call ${c.ambulance}.`;
   }
   if (lower.includes("unconscious")) {
-    return "Check breathing. Place in recovery position if breathing. Call 112 now.";
+    return `Check breathing. Place in recovery position if breathing. Call ${c.allEmergency} now.`;
   }
   if (type === "Vehicle Breakdown") {
-    return "Turn on hazard lights. Move vehicle off road if possible. Call 1033.";
+    const roadHelp = c.highway ?? c.police;
+    return `Turn on hazard lights. Move vehicle off road if possible. Call ${roadHelp}.`;
   }
   if (type === "Security Emergency") {
-    return "Move to safe location. Do not confront. Call 100 immediately.";
+    return `Move to safe location. Do not confront. Call ${c.police} immediately.`;
   }
-  return "Stay calm. Call 112. Share your live location with emergency contacts.";
-}
-
-export function getCallFirst(type: string, input: string): string {
-  const lower = input.toLowerCase();
-  if (lower.includes("fire") || lower.includes("burn")) return "101";
-  if (type === "Security Emergency") return "100";
-  if (type === "Vehicle Breakdown") return "1033";
-  return "108";
+  return `Stay calm. Call ${c.allEmergency}. Share your live location with emergency contacts.`;
 }
 
 // ─── Peak Hour Intelligence ───────────────────────────────────────────────────
@@ -137,13 +160,14 @@ export function getPeakHourWarning(): string | null {
 
 export function generateDispatchSummary(
   input: string,
-  type: string
+  type: string,
+  country?: CountryEmergency,
 ): DispatchSummary {
+  const c = country ?? getCountryEmergencySync();
   const isTwoWheeler = detectTwoWheelerRisk(input);
   const isHeadTrauma = detectHeadTraumaRisk(input);
   const severity = detectSeverity(input);
 
-  // Escalate severity for two-wheeler + head trauma
   const finalSeverity: EmergencySeverity =
     isTwoWheeler && isHeadTrauma ? "Critical" :
     isTwoWheeler ? "High" :
@@ -153,8 +177,8 @@ export function generateDispatchSummary(
     type,
     severity: finalSeverity,
     primaryRisk: detectPrimaryRisk(input, type),
-    immediateAction: detectImmediateAction(input, type),
-    callFirst: getCallFirst(type, input),
+    immediateAction: detectImmediateAction(input, type, c),
+    callFirst: getCallFirst(type, input, c),
     twoWheelerProtocol: isTwoWheeler,
     headTraumaRisk: isHeadTrauma,
     peakHourWarning: getPeakHourWarning(),
@@ -162,22 +186,22 @@ export function generateDispatchSummary(
   };
 }
 
-// ─── Severity Color Helper ────────────────────────────────────────────────────
+// ─── Severity Color Helpers ───────────────────────────────────────────────────
 
 export function getSeverityColor(severity: EmergencySeverity): string {
   switch (severity) {
     case "Critical": return "bg-destructive text-destructive-foreground";
-    case "High": return "bg-warning text-warning-foreground";
+    case "High":     return "bg-warning text-warning-foreground";
     case "Moderate": return "bg-accent text-accent-foreground";
-    default: return "bg-success text-success-foreground";
+    default:         return "bg-success text-success-foreground";
   }
 }
 
 export function getSeverityBadgeColor(severity: EmergencySeverity): string {
   switch (severity) {
     case "Critical": return "bg-destructive/10 text-destructive border border-destructive/20";
-    case "High": return "bg-warning/10 text-warning-foreground border border-warning/20";
+    case "High":     return "bg-warning/10 text-warning-foreground border border-warning/20";
     case "Moderate": return "bg-accent text-accent-foreground";
-    default: return "bg-success/10 text-success border border-success/20";
+    default:         return "bg-success/10 text-success border border-success/20";
   }
 }

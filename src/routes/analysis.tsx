@@ -12,6 +12,10 @@ import {
   getPeakHourWarning,
   type DispatchSummary,
 } from "@/utils/emergencyIntelligence";
+import {
+  getCountryEmergency,
+  type CountryEmergency,
+} from "@/utils/countryEmergency";
 
 export const Route = createFileRoute("/analysis")({
   component: Analysis,
@@ -102,8 +106,9 @@ function Analysis() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [aiResponse, setAiResponse] = useState<string>("");
   const [loadingAI, setLoadingAI] = useState(false);
-  const [aiDone, setAiDone] = useState(false); // FIX: track when AI + storage update is complete
+  const [aiDone, setAiDone] = useState(false);
   const [dispatch, setDispatch] = useState<DispatchSummary | null>(null);
+  const [country, setCountry] = useState<CountryEmergency | null>(null);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
@@ -115,13 +120,30 @@ function Analysis() {
         const parsed: AnalysisData = JSON.parse(savedAnalysis);
         setAnalysis(parsed);
 
-        const summary = generateDispatchSummary(parsed.input, parsed.type);
+        // Resolve country — use GPS if available, else cache/India default
+        let resolvedCountry: CountryEmergency | undefined;
+        try {
+          const pos = await new Promise<GeolocationPosition>((res, rej) =>
+            navigator.geolocation.getCurrentPosition(res, rej, { timeout: 4000 })
+          );
+          resolvedCountry = await getCountryEmergency(
+            pos.coords.latitude,
+            pos.coords.longitude,
+          );
+        } catch {
+          // Offline or denied — getCountryEmergency will use cache/India default
+          const { getCountryEmergencySync } = await import("@/utils/countryEmergency");
+          resolvedCountry = getCountryEmergencySync();
+        }
+        setCountry(resolvedCountry);
+
+        const summary = generateDispatchSummary(parsed.input, parsed.type, resolvedCountry);
         setDispatch(summary);
 
         setLoadingAI(true);
         let response = "";
         try {
-          response = await analyzeEmergency(parsed.input);
+          response = await analyzeEmergency(parsed.input, resolvedCountry);
         } catch (error) {
           console.error("Gemini failed:", error);
           response = JSON.stringify({
@@ -131,13 +153,12 @@ function Analysis() {
             immediate_action: summary.immediateAction,
             do: ["Stay calm", "Call emergency services", "Share your location"],
             dont: ["Panic", "Leave victim unattended", "Move severely injured persons"],
-            disclaimer: "AI analysis temporarily unavailable. Call 112 immediately.",
+            disclaimer: `AI analysis temporarily unavailable. Call ${resolvedCountry.allEmergency} immediately.`,
           });
         }
 
         setAiResponse(response);
 
-        // Update roadsos-analysis with Gemini's corrected type before allowing navigation
         const parsedAI = parseAIResponse(response);
         if (parsedAI?.emergency_type && VALID_TYPES.includes(parsedAI.emergency_type as EmergencyType)) {
           const aiType = parsedAI.emergency_type as EmergencyType;
@@ -151,7 +172,7 @@ function Analysis() {
           setAnalysis(updatedAnalysis);
           localStorage.setItem("roadsos-analysis", JSON.stringify(updatedAnalysis));
 
-          const updatedDispatch = generateDispatchSummary(parsed.input, aiType);
+          const updatedDispatch = generateDispatchSummary(parsed.input, aiType, resolvedCountry);
           setDispatch(updatedDispatch);
         }
 
@@ -159,13 +180,12 @@ function Analysis() {
         console.error("Failed to load analysis", error);
       } finally {
         setLoadingAI(false);
-        setAiDone(true); // FIX: only enable "View Nearby" after analysis is saved
+        setAiDone(true);
       }
     }
     loadAnalysis();
   }, []);
 
-  // FIX: only navigate once AI analysis is saved to localStorage
   function handleViewNearby() {
     if (!aiDone) return;
     navigate({ to: "/nearby" });
@@ -193,7 +213,10 @@ function Analysis() {
         </button>
         <div>
           <h1 className="text-xl font-bold">AI Analysis</h1>
-          <p className="text-xs text-muted-foreground">Emergency intelligence report</p>
+          <p className="text-xs text-muted-foreground">
+            Emergency intelligence report
+            {country ? ` · ${country.countryName}` : ""}
+          </p>
         </div>
       </header>
 
@@ -243,6 +266,12 @@ function Analysis() {
                 <span className="text-muted-foreground">Time</span>
                 <span className="font-medium">{dispatch.timestamp}</span>
               </div>
+              {country && (
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Country</span>
+                  <span className="font-medium">{country.countryName}</span>
+                </div>
+              )}
               <div className="pt-2 border-t border-border">
                 <p className="text-xs text-muted-foreground mb-1">Immediate Action</p>
                 <p className="text-sm font-semibold text-foreground">{dispatch.immediateAction}</p>
@@ -333,7 +362,6 @@ function Analysis() {
           >
             Send SOS
           </button>
-          {/* FIX: disabled until AI analysis is saved, prevents stale type reaching nearby */}
           <button
             onClick={handleViewNearby}
             disabled={!aiDone}

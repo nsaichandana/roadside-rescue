@@ -2,11 +2,17 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   Phone, Navigation, Star, MapPin,
   Loader2, AlertTriangle, Clock3, ShieldAlert, MessageSquare,
+  WifiOff,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getUserLocation } from "@/services/location";
 import { fetchNearbyPlaces, EmergencyType, NearbyPlace } from "@/services/places";
+import {
+  getCountryEmergency,
+  getCountryEmergencySync,
+  type CountryEmergency,
+} from "@/utils/countryEmergency";
 
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -32,7 +38,15 @@ type AnalysisData = {
   timestamp: string;
 };
 
-// All filter types from home.tsx tiles → EmergencyType + display label
+// Cached place shape written to localStorage
+type CachedPlace = {
+  name: string;
+  type: string;
+  distance: string;
+  lat: number;
+  lon: number;
+};
+
 const filterTypeMap: Record<string, { type: EmergencyType; label: string; input: string }> = {
   police:   { type: "Security Emergency",  label: "Police Help",        input: "Need police assistance" },
   mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown",  input: "Vehicle breakdown, need mechanic or towing" },
@@ -42,18 +56,26 @@ const filterTypeMap: Record<string, { type: EmergencyType; label: string; input:
   showroom: { type: "Vehicle Breakdown",   label: "Car Service Centre", input: "Need car showroom or service centre nearby" },
 };
 
-// Type-specific fallback call numbers
-function getCallNumber(place: NearbyPlace, emergencyType?: EmergencyType): string {
+/**
+ * Returns the best call number for a place.
+ * Uses the place's own phone if present, otherwise falls back to the
+ * country-specific emergency number for the given emergency type.
+ */
+function getCallNumber(
+  place: NearbyPlace,
+  emergencyType: EmergencyType | undefined,
+  country: CountryEmergency,
+): string {
   if (place.phone) return place.phone;
   switch (emergencyType) {
-    case "Security Emergency": return "100";
-    case "Medical Emergency":  return "108";
-    case "Fire Emergency":     return "101";
-    default:                   return "112";
+    case "Security Emergency": return country.police;
+    case "Medical Emergency":  return country.ambulance;
+    case "Fire Emergency":     return country.fire;
+    case "Vehicle Breakdown":  return country.highway ?? country.allEmergency;
+    default:                   return country.allEmergency;
   }
 }
 
-// Build SMS body for a given place
 function getSmsBody(place: NearbyPlace, userLat?: number, userLon?: number): string {
   const locPart = userLat && userLon
     ? `My location: https://maps.google.com/?q=${userLat},${userLon}`
@@ -97,7 +119,6 @@ const typeColor: Record<string, string> = {
   showroom:     "#6366f1",
 };
 
-// Human-readable labels for place types
 const typeLabel: Record<string, string> = {
   hospital:     "Hospital",
   ambulance:    "Ambulance",
@@ -185,28 +206,113 @@ function MapView({
   );
 }
 
+// ── Offline fallback card — shown when Overpass fails mid-session ──────────────
+function OfflineCachedPlaces({
+  cachedPlaces,
+  country,
+}: {
+  cachedPlaces: CachedPlace[];
+  country: CountryEmergency;
+}) {
+  if (cachedPlaces.length === 0) {
+    return (
+      <div className="bg-warning/10 border border-warning/30 rounded-2xl p-5 text-center">
+        <WifiOff className="w-8 h-8 text-warning-foreground mx-auto mb-2" />
+        <p className="font-semibold text-sm">No internet · No cached services</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Visit this page while online to cache nearby services for offline use.
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <a
+            href={`tel:${country.allEmergency}`}
+            className="py-2.5 rounded-xl bg-destructive text-destructive-foreground font-bold text-sm text-center"
+          >
+            📞 {country.allEmergency}
+          </a>
+          <a
+            href={`tel:${country.ambulance}`}
+            className="py-2.5 rounded-xl bg-primary/10 text-primary font-bold text-sm text-center"
+          >
+            🚑 {country.ambulance}
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-warning/10 border border-warning/30 rounded-2xl p-3 flex items-center gap-3">
+        <WifiOff className="w-4 h-4 text-warning-foreground flex-shrink-0" />
+        <p className="text-xs text-warning-foreground font-medium">
+          Offline — showing last cached results. Call {country.allEmergency} for live assistance.
+        </p>
+      </div>
+      {cachedPlaces.map((p, i) => (
+        <div
+          key={i}
+          className="bg-card border border-border rounded-2xl p-4 shadow-card flex items-center gap-3"
+        >
+          <div
+            className="w-3 h-3 rounded-full flex-shrink-0"
+            style={{ background: typeColor[p.type] ?? "#6366f1" }}
+          />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-sm truncate">{p.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {typeLabel[p.type] ?? p.type}
+              {p.distance ? ` · ${p.distance}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {p.lat && p.lon && (
+              <a
+                href={`https://www.google.com/maps?q=${p.lat},${p.lon}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Nearby() {
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState("");
-  const [places, setPlaces]         = useState<NearbyPlace[]>([]);
-  const [analysis, setAnalysis]     = useState<AnalysisData | null>(null);
-  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
-  // FIX: track the filter label (from home tile) for the subtitle
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState("");
+  const [isOffline, setIsOffline]     = useState(false);
+  const [places, setPlaces]           = useState<NearbyPlace[]>([]);
+  const [cachedPlaces, setCachedPlaces] = useState<CachedPlace[]>([]);
+  const [analysis, setAnalysis]       = useState<AnalysisData | null>(null);
+  const [userCoords, setUserCoords]   = useState<{ lat: number; lon: number } | null>(null);
   const [filterLabel, setFilterLabel] = useState<string | null>(null);
+  const [country, setCountry]         = useState<CountryEmergency>(getCountryEmergencySync());
 
   useEffect(() => {
+    // Load cached places immediately so offline fallback is instant
+    try {
+      const raw = localStorage.getItem("roadsos-last-places");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setCachedPlaces(parsed);
+      }
+    } catch { /* ignore */ }
+
     async function load() {
       try {
         setLoading(true);
 
-        // Check for tile filter first (set by home.tsx quick action tiles)
         const tileFilter = localStorage.getItem("roadsos-nearby-filter");
         localStorage.removeItem("roadsos-nearby-filter");
 
         let parsedAnalysis: AnalysisData;
 
         if (tileFilter && filterTypeMap[tileFilter]) {
-          // Came from a home tile — build a synthetic analysis
           const mapped = filterTypeMap[tileFilter];
           setFilterLabel(mapped.label);
           parsedAnalysis = {
@@ -216,11 +322,9 @@ function Nearby() {
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
         } else {
-          // Came from analysis page — read saved result
           const savedAnalysis = localStorage.getItem("roadsos-analysis");
           if (savedAnalysis) {
             parsedAnalysis = JSON.parse(savedAnalysis);
-            // Upgrade severity if keywords suggest worse than LOW
             if (
               parsedAnalysis.severity === "LOW" &&
               /ambulance|need help|accident|crash|bleeding|unconscious/i.test(parsedAnalysis.input)
@@ -228,7 +332,6 @@ function Nearby() {
               parsedAnalysis.severity = "HIGH";
             }
           } else {
-            // No analysis and no filter — generic fallback, don't crash
             parsedAnalysis = {
               input: "General emergency assistance",
               type: "Medical Emergency",
@@ -240,9 +343,18 @@ function Nearby() {
 
         setAnalysis(parsedAnalysis);
 
+        // Get location
         const location = await getUserLocation();
         setUserCoords({ lat: location.latitude, lon: location.longitude });
 
+        // Resolve country (uses cache if offline)
+        const resolvedCountry = await getCountryEmergency(
+          location.latitude,
+          location.longitude,
+        );
+        setCountry(resolvedCountry);
+
+        // Fetch nearby places — may throw if Overpass is unreachable
         const nearbyPlaces = await fetchNearbyPlaces(
           location.latitude,
           location.longitude,
@@ -252,24 +364,36 @@ function Nearby() {
 
         setPlaces(nearbyPlaces);
 
-        // Cache for offline use — slim shape with lat/lon (read by offline.tsx)
         if (nearbyPlaces.length > 0) {
-          localStorage.setItem("roadsos-last-places", JSON.stringify(
-            nearbyPlaces.slice(0, 5).map((p) => ({
-              name: p.name,
-              type: p.type,
-              distance: `${p.distance} km`,
-              lat: p.latitude,
-              lon: p.longitude,
-            }))
-          ));
+          const slim = nearbyPlaces.slice(0, 5).map((p) => ({
+            name: p.name,
+            type: p.type,
+            distance: `${p.distance} km`,
+            lat: p.latitude,
+            lon: p.longitude,
+          }));
+          localStorage.setItem("roadsos-last-places", JSON.stringify(slim));
+          setCachedPlaces(slim);
           localStorage.setItem(
             "roadsos-last-sync",
             new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           );
         }
       } catch (err: any) {
-        setError(err.message || "Unable to fetch nearby services.");
+        // Distinguish network failure from other errors
+        const msg: string = err?.message ?? "";
+        const networkFail =
+          msg.toLowerCase().includes("network") ||
+          msg.toLowerCase().includes("fetch") ||
+          msg.toLowerCase().includes("failed to fetch") ||
+          !navigator.onLine;
+
+        if (networkFail) {
+          setIsOffline(true);
+          // Don't set error — show offline fallback UI instead
+        } else {
+          setError(msg || "Unable to fetch nearby services.");
+        }
       } finally {
         setLoading(false);
       }
@@ -277,7 +401,6 @@ function Nearby() {
     load();
   }, []);
 
-  // Subtitle: show filter label from tile, or emergency type from analysis
   const subtitle = filterLabel
     ? `Showing: ${filterLabel}`
     : analysis
@@ -291,17 +414,17 @@ function Nearby() {
         subtitle={subtitle}
       />
 
-      {/* Map */}
-      {userCoords ? (
+      {/* Map — only when we have live results */}
+      {userCoords && places.length > 0 ? (
         <MapView userLat={userCoords.lat} userLon={userCoords.lon} places={places} />
-      ) : (
+      ) : !loading && !isOffline ? (
         <div className="mx-5 h-[220px] rounded-2xl border border-border shadow-card bg-muted flex items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
             <MapPin className="w-6 h-6 animate-bounce" />
             <p className="text-xs">Loading map...</p>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Type legend pills */}
       {!loading && places.length > 0 && (
@@ -319,8 +442,7 @@ function Nearby() {
         </div>
       )}
 
-      {/* ── SERVICE COUNT BANNER ── jury criterion */}
-      {!loading && !error && places.length > 0 && (
+      {!loading && !error && !isOffline && places.length > 0 && (
         <div className="mx-5 mt-3">
           <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -334,7 +456,6 @@ function Nearby() {
         </div>
       )}
 
-      {/* Active emergency banner — only shown when coming from analysis (not tile) */}
       {analysis && !filterLabel && (
         <div className="px-5 mt-4">
           <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
@@ -361,7 +482,6 @@ function Nearby() {
         </div>
       )}
 
-      {/* Loading state */}
       {loading && (
         <div className="px-5 py-10 flex flex-col items-center justify-center text-center">
           <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -370,8 +490,8 @@ function Nearby() {
         </div>
       )}
 
-      {/* Error state */}
-      {error && (
+      {/* Hard error (non-network) */}
+      {error && !isOffline && (
         <div className="px-5 mt-4">
           <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-destructive mt-0.5" />
@@ -383,8 +503,15 @@ function Nearby() {
         </div>
       )}
 
-      {/* Place cards */}
-      {!loading && !error && (
+      {/* ── Offline fallback — replaces the live list ── */}
+      {isOffline && !loading && (
+        <div className="px-5 mt-4">
+          <OfflineCachedPlaces cachedPlaces={cachedPlaces} country={country} />
+        </div>
+      )}
+
+      {/* Live place cards */}
+      {!loading && !error && !isOffline && (
         <div className="px-5 mt-4 space-y-3 pb-6">
           {places.length === 0 && (
             <div className="bg-card border border-border rounded-2xl p-6 text-center">
@@ -396,7 +523,7 @@ function Nearby() {
           )}
 
           {places.map((place, index) => {
-            const callNumber = getCallNumber(place, analysis?.type);
+            const callNumber = getCallNumber(place, analysis?.type, country);
             const smsBody = getSmsBody(place, userCoords?.lat, userCoords?.lon);
             return (
               <div
@@ -438,7 +565,6 @@ function Nearby() {
                   </div>
                 </div>
 
-                {/* 3-button action row: Call · SMS · Navigate */}
                 <div className="grid grid-cols-3 gap-2 mt-4">
                   <a
                     href={`tel:${callNumber}`}
