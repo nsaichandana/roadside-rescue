@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Siren, MapPin, Check, Phone, Clock3,
   ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
@@ -12,9 +12,6 @@ import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/count
 export const Route = createFileRoute("/sos")({ component: SOS });
 
 // ── Fast2SMS silent send ──────────────────────────────────────────────────────
-// Sends SMS directly via API — zero user interaction required.
-// Falls back to native SMS app if API fails or key is missing.
-
 type SendStatus = {
   phone: string;
   name: string;
@@ -28,7 +25,6 @@ async function sendVisFast2SMS(
   const apiKey = import.meta.env.VITE_FAST2SMS_API_KEY;
   if (!apiKey) throw new Error("No API key");
 
-  // Fast2SMS accepts comma-separated numbers, strips country code automatically
   const numbers = phones
     .map((p) => p.replace(/\D/g, "").replace(/^91/, "").slice(-10))
     .filter((p) => p.length === 10)
@@ -43,7 +39,7 @@ async function sendVisFast2SMS(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      route: "q",           // quick transactional route
+      route: "q",
       message,
       language: "english",
       flash: 0,
@@ -52,11 +48,44 @@ async function sendVisFast2SMS(
   });
 
   const data = await res.json();
-
   if (data.return === true) {
     return { success: phones, failed: [] };
   } else {
     throw new Error(data.message ?? "Fast2SMS failed");
+  }
+}
+
+// ── Reverse geocode (copied from trip.tsx) ────────────────────────────────────
+const geocodeCache = new Map<string, string>();
+
+async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+  if (geocodeCache.has(key)) return geocodeCache.get(key)!;
+  try {
+    const stored = localStorage.getItem(`roadsos-geocode-${key}`);
+    if (stored) { geocodeCache.set(key, stored); return stored; }
+  } catch { /* ignore */ }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      { headers: { "Accept-Language": "en" }, signal: controller.signal }
+    );
+    clearTimeout(timer);
+    const data = await res.json();
+    const addr = data.address;
+    const parts = [
+      addr.road || addr.pedestrian || addr.suburb,
+      addr.city || addr.town || addr.village || addr.county,
+      addr.state,
+    ].filter(Boolean);
+    const label = parts.slice(0, 2).join(", ") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    geocodeCache.set(key, label);
+    try { localStorage.setItem(`roadsos-geocode-${key}`, label); } catch { /* ignore */ }
+    return label;
+  } catch {
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   }
 }
 
@@ -69,7 +98,6 @@ type UserData = {
   emergencyContact1Phone?: string;
   emergencyContact2Name?: string;
   emergencyContact2Phone?: string;
-  // legacy fallback
   emergency1Name?: string;
   emergency1?: string;
   emergency2Name?: string;
@@ -88,15 +116,15 @@ type LocationData = {
   longitude: number;
 };
 
-/** Normalise phone using detected country prefix for wa.me */
 function normalisePhone(raw: string): string {
   return normalisePhoneForCountry(raw, getCountryEmergencySync());
 }
 
-/** Build the SOS message text (plain, NOT encoded) */
+// ── FIX: address param added to buildMessage ──────────────────────────────────
 function buildMessage(
   user: UserData,
   location: LocationData | null,
+  address: string,
   nearestHospital: string,
   time: string
 ): string {
@@ -106,13 +134,14 @@ function buildMessage(
   const medNote = user.medicalConditions
     ? `\n⚕️ Medical Info: ${user.medicalConditions}`
     : "";
+  const addressLine = address ? `📍 Address: ${address}\n` : "";
   return (
     `🚨 EMERGENCY SOS — RoadSOS\n\n` +
     `👤 Name: ${user.fullName}\n` +
     `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
     `📞 Phone: ${user.phone}\n\n` +
     (mapsLink
-      ? `📍 Live Location:\n${mapsLink}\n\n`
+      ? `🗺️ Live Location:\n${mapsLink}\n${addressLine}\n`
       : `⚠️ Location unavailable — please call immediately.\n\n`) +
     `🏥 Nearest Help: ${nearestHospital}\n` +
     `⏰ Time: ${time}\n\n` +
@@ -130,39 +159,34 @@ function SOS() {
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationError, setLocationError]     = useState("");
   const [location, setLocation]               = useState<LocationData | null>(null);
+  // FIX: new state for human-readable address
+  const [address, setAddress]                 = useState<string>("");
   const [user, setUser]                       = useState<UserData | null>(null);
   const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
-    // Load profile
     const savedUser = localStorage.getItem("roadsos-user");
     if (savedUser) {
       try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
-
-    // Load all saved contacts from contacts page
     const savedContacts = localStorage.getItem("roadsos-contacts");
     if (savedContacts) {
       try { setAllContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
     }
-
     fetchLocation();
 
-    // Retry queue: if a previous SOS was queued while offline, retry now
     const queued = localStorage.getItem("roadsos-sos-queue");
     if (queued && navigator.onLine) {
       setRetryQueued(true);
       localStorage.removeItem("roadsos-sos-queue");
     }
 
-    // Listen for coming back online
     function handleOnline() {
       const q = localStorage.getItem("roadsos-sos-queue");
       if (q) {
         setRetryQueued(true);
         localStorage.removeItem("roadsos-sos-queue");
-        // Re-trigger SOS send automatically
         try {
           const qd = JSON.parse(q);
           if (qd.waUrl) window.open(qd.waUrl, "_blank");
@@ -173,48 +197,49 @@ function SOS() {
     return () => window.removeEventListener("online", handleOnline);
   }, []);
 
+  // FIX: call reverseGeocode whenever location changes
+  useEffect(() => {
+    if (!location) return;
+    reverseGeocode(location.latitude, location.longitude).then(setAddress);
+  }, [location]);
+
   function fetchLocation() {
     if (!navigator.geolocation) {
       setLocationError("GPS not supported on this device.");
       setLoadingLocation(false);
       return;
     }
-    // Stage 1: quick low-accuracy fix (fast, works indoors)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
         setLoadingLocation(false);
-        // Stage 2: silently upgrade to high-accuracy
         navigator.geolocation.getCurrentPosition(
           (precise) => {
             setLocation({ latitude: precise.coords.latitude, longitude: precise.coords.longitude });
           },
-          () => { /* already have coarse location — ignore */ },
+          () => { /* already have coarse location */ },
           { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
       },
       () => {
-        // Fallback 1: try roadsos-last-location (written by trip.tsx)
         let recovered = false;
         const lastLoc = localStorage.getItem("roadsos-last-location");
         if (lastLoc) {
           try {
             const d = JSON.parse(lastLoc);
-            if (d?.lat && d?.lon) {
-              setLocation({ latitude: d.lat, longitude: d.lon });
+            // FIX: check both d.lon and d.lng (trip.tsx writes lng)
+            if (d?.lat && (d?.lon ?? d?.lng)) {
+              setLocation({ latitude: d.lat, longitude: d.lon ?? d.lng });
               recovered = true;
             }
           } catch { /* ignore */ }
         }
 
-        // Fallback 2: first item in roadsos-last-places array has lat/lon
         if (!recovered) {
           const cachedPlaces = localStorage.getItem("roadsos-last-places");
           if (cachedPlaces) {
             try {
               const places = JSON.parse(cachedPlaces);
-              // nearby.tsx writes the search origin as first element or
-              // stores lat/lon at array level depending on version — check both
               if (Array.isArray(places) && places[0]?.lat && places[0]?.lon) {
                 setLocation({ latitude: places[0].lat, longitude: places[0].lon });
                 recovered = true;
@@ -226,14 +251,13 @@ function SOS() {
           }
         }
 
-        // Fallback 3: roadsos-trip-origin written by trip.tsx
         if (!recovered) {
           const tripOrigin = localStorage.getItem("roadsos-trip-origin");
           if (tripOrigin) {
             try {
               const d = JSON.parse(tripOrigin);
-              if (d?.lat && d?.lon) {
-                setLocation({ latitude: d.lat, longitude: d.lon });
+              if (d?.lat && (d?.lon ?? d?.lng)) {
+                setLocation({ latitude: d.lat, longitude: d.lon ?? d.lng });
                 recovered = true;
               }
             } catch { /* ignore */ }
@@ -261,7 +285,6 @@ function SOS() {
     setTime(currentTime);
     setSent(true);
 
-    // If offline — queue for retry when connection returns
     if (!navigator.onLine) {
       localStorage.setItem("roadsos-sos-queue", JSON.stringify({
         ts: currentTime,
@@ -269,10 +292,8 @@ function SOS() {
         queued: true,
       }));
       setRetryQueued(true);
-      // Still attempt SMS (works offline on Android via native SMS app)
     }
 
-    // Get nearest hospital from cache
     const cachedPlaces = localStorage.getItem("roadsos-last-places");
     let nearestHospital = "Nearest emergency service";
     if (cachedPlaces) {
@@ -285,38 +306,26 @@ function SOS() {
       } catch { /* ignore */ }
     }
 
-    const msgText = buildMessage(user, location, nearestHospital, currentTime);
+    // FIX: pass address into buildMessage
+    const msgText = buildMessage(user, location, address, nearestHospital, currentTime);
 
-    // ── 1. COLLECT ALL PHONE NUMBERS ────────────────────────────────────────
-
-    // Emergency contacts from profile
     const emergencyPhones: { name: string; phone: string }[] = [];
-    const ec1Phone =
-      user.emergencyContact1Phone || user.emergency1 || "";
-    const ec1Name =
-      user.emergencyContact1Name || user.emergency1Name || "Emergency Contact 1";
-    const ec2Phone =
-      user.emergencyContact2Phone || user.emergency2 || "";
-    const ec2Name =
-      user.emergencyContact2Name || user.emergency2Name || "Emergency Contact 2";
+    const ec1Phone = user.emergencyContact1Phone || user.emergency1 || "";
+    const ec1Name  = user.emergencyContact1Name  || user.emergency1Name || "Emergency Contact 1";
+    const ec2Phone = user.emergencyContact2Phone || user.emergency2 || "";
+    const ec2Name  = user.emergencyContact2Name  || user.emergency2Name || "Emergency Contact 2";
 
     if (ec1Phone) emergencyPhones.push({ name: ec1Name, phone: ec1Phone });
     if (ec2Phone) emergencyPhones.push({ name: ec2Name, phone: ec2Phone });
 
-    // All contacts from contacts page (deduplicated)
     const allPhones: { name: string; phone: string }[] = [
       ...emergencyPhones,
       ...allContacts.filter(
-        (c) =>
-          c.phone &&
-          c.phone !== ec1Phone &&
-          c.phone !== ec2Phone
+        (c) => c.phone && c.phone !== ec1Phone && c.phone !== ec2Phone
       ),
     ];
 
-    // ── 2. SMS VIA FAST2SMS API — zero user interaction ─────────────────────
     if (allPhones.length > 0) {
-      // Set all to "sending" state for UI feedback
       const initialStatuses: SendStatus[] = allPhones.map((c) => ({
         phone: c.phone,
         name: c.name,
@@ -335,14 +344,12 @@ function SOS() {
           setApiSending(false);
         })
         .catch(() => {
-          // API failed — fall back to native SMS app
           setApiSending(false);
           setSendStatuses(allPhones.map((c) => ({
             phone: c.phone,
             name: c.name,
             status: "failed",
           })));
-          // Native SMS fallback
           const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
           if (isIOS) {
             allPhones.forEach((contact, i) => {
@@ -365,14 +372,10 @@ function SOS() {
         });
     }
 
-    // ── 3. WHATSAPP TO EACH EMERGENCY CONTACT ───────────────────────────────
-    // First contact uses location.href (always works, within user gesture).
-    // Subsequent contacts use window.open with delay.
     emergencyPhones.forEach((contact, i) => {
       const waNumber = normalisePhone(contact.phone);
       const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(msgText)}`;
       if (i === 0) {
-        // Delay slightly so SMS intent fires first
         setTimeout(() => { window.location.href = waUrl; }, 500);
       } else {
         setTimeout(() => { window.open(waUrl, "_blank"); }, i * 1200);
@@ -380,7 +383,6 @@ function SOS() {
     });
   }
 
-  // ── CONTACTS DISPLAY LIST ─────────────────────────────────────────────────
   const ec1Phone = user?.emergencyContact1Phone || user?.emergency1 || "";
   const ec1Name  = user?.emergencyContact1Name  || user?.emergency1Name || "Emergency Contact 1";
   const ec2Phone = user?.emergencyContact2Phone || user?.emergency2 || "";
@@ -420,6 +422,22 @@ function SOS() {
           </div>
         )}
 
+        {/* FIX: No profile banner */}
+        {!user && (
+          <div className="bg-warning/15 border border-warning/30 rounded-2xl p-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-warning-foreground">Profile not set up</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Set up your emergency profile to enable SOS</p>
+            </div>
+            <Link
+              to="/setup"
+              className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold whitespace-nowrap"
+            >
+              Set up now →
+            </Link>
+          </div>
+        )}
+
         {/* SOS Button */}
         <div className="rounded-3xl bg-card border border-border p-6 shadow-card text-center">
           <button
@@ -438,7 +456,6 @@ function SOS() {
             </div>
           </button>
 
-          {/* What will happen */}
           {!sent && (
             <div className="mt-4 space-y-1 text-xs text-muted-foreground">
               <p className="flex items-center justify-center gap-1.5">
@@ -465,7 +482,6 @@ function SOS() {
                 Sent at {time}
               </div>
 
-              {/* Per-contact send status */}
               {sendStatuses.length > 0 && (
                 <div className="mt-3 space-y-1.5 text-left">
                   {sendStatuses.map((s) => (
@@ -523,7 +539,7 @@ function SOS() {
           </div>
         </div>
 
-        {/* Live Location */}
+        {/* Live Location — FIX: now shows readable address */}
         <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3">
@@ -538,9 +554,21 @@ function SOS() {
                     Fetching live coordinates...
                   </div>
                 ) : location ? (
-                  <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
-                    <p>Lat: {location.latitude.toFixed(6)}</p>
-                    <p>Long: {location.longitude.toFixed(6)}</p>
+                  <div className="mt-1 space-y-0.5">
+                    {/* FIX: show readable address prominently */}
+                    {address ? (
+                      <p className="text-sm font-semibold text-foreground">{address}</p>
+                    ) : (
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Getting address...
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground font-mono">
+                      {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                    </p>
+                    {locationError && (
+                      <p className="text-xs text-warning-foreground">{locationError}</p>
+                    )}
                   </div>
                 ) : (
                   <p className="text-xs text-destructive mt-1">{locationError}</p>
@@ -635,7 +663,7 @@ function SOS() {
             <div>
               <p className="font-bold">Emergency Broadcast Ready</p>
               <p className="text-sm text-white/85 mt-1">
-                One tap sends SMS to all your contacts and WhatsApp messages directly to your emergency contacts — with your live location, blood group, and nearest hospital.
+                One tap sends SMS to all your contacts and WhatsApp messages directly to your emergency contacts — with your live location, address, blood group, and nearest hospital.
               </p>
             </div>
           </div>
