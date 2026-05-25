@@ -3,9 +3,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { VitePWA } from 'vite-plugin-pwa'
+import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 
 export default defineConfig({
   plugins: [
+    TanStackRouterVite(),
     react(),
     tailwindcss(),
     tsconfigPaths(),
@@ -22,7 +24,6 @@ export default defineConfig({
         orientation: 'portrait',
         scope: '/',
         start_url: '/',
-        // FIX: split into 4 entries — 'any' and 'maskable' must be separate
         icons: [
           {
             src: '/icons/icon-192.png',
@@ -95,17 +96,8 @@ export default defineConfig({
               cacheName: 'map-tiles-cache',
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
             }
-          },
-          {
-            // Cache Gemini API responses briefly
-            urlPattern: /^https:\/\/generativelanguage\.googleapis\.com\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'gemini-cache',
-              expiration: { maxEntries: 10, maxAgeSeconds: 60 * 30 },
-              networkTimeoutSeconds: 10,
-            }
           }
+          // Gemini cache removed — AI emergency responses must always be fresh
         ]
       },
       devOptions: {

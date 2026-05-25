@@ -14,6 +14,7 @@ import { Route as SosRouteImport } from './routes/sos'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as OfflineRouteImport } from './routes/offline'
 import { Route as NearbyRouteImport } from './routes/nearby'
+import { Route as MedicalRouteImport } from './routes/medical'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as GuidanceRouteImport } from './routes/guidance'
 import { Route as EmergencyRouteImport } from './routes/emergency'
@@ -44,6 +45,11 @@ const OfflineRoute = OfflineRouteImport.update({
 const NearbyRoute = NearbyRouteImport.update({
   id: '/nearby',
   path: '/nearby',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MedicalRoute = MedicalRouteImport.update({
+  id: '/medical',
+  path: '/medical',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HomeRoute = HomeRouteImport.update({
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/emergency': typeof EmergencyRoute
   '/guidance': typeof GuidanceRoute
   '/home': typeof HomeRoute
+  '/medical': typeof MedicalRoute
   '/nearby': typeof NearbyRoute
   '/offline': typeof OfflineRoute
   '/setup': typeof SetupRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/emergency': typeof EmergencyRoute
   '/guidance': typeof GuidanceRoute
   '/home': typeof HomeRoute
+  '/medical': typeof MedicalRoute
   '/nearby': typeof NearbyRoute
   '/offline': typeof OfflineRoute
   '/setup': typeof SetupRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/emergency': typeof EmergencyRoute
   '/guidance': typeof GuidanceRoute
   '/home': typeof HomeRoute
+  '/medical': typeof MedicalRoute
   '/nearby': typeof NearbyRoute
   '/offline': typeof OfflineRoute
   '/setup': typeof SetupRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/emergency'
     | '/guidance'
     | '/home'
+    | '/medical'
     | '/nearby'
     | '/offline'
     | '/setup'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/emergency'
     | '/guidance'
     | '/home'
+    | '/medical'
     | '/nearby'
     | '/offline'
     | '/setup'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/emergency'
     | '/guidance'
     | '/home'
+    | '/medical'
     | '/nearby'
     | '/offline'
     | '/setup'
@@ -166,6 +178,7 @@ export interface RootRouteChildren {
   EmergencyRoute: typeof EmergencyRoute
   GuidanceRoute: typeof GuidanceRoute
   HomeRoute: typeof HomeRoute
+  MedicalRoute: typeof MedicalRoute
   NearbyRoute: typeof NearbyRoute
   OfflineRoute: typeof OfflineRoute
   SetupRoute: typeof SetupRoute
@@ -208,6 +221,13 @@ declare module '@tanstack/react-router' {
       path: '/nearby'
       fullPath: '/nearby'
       preLoaderRoute: typeof NearbyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/medical': {
+      id: '/medical'
+      path: '/medical'
+      fullPath: '/medical'
+      preLoaderRoute: typeof MedicalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/home': {
@@ -262,6 +282,7 @@ const rootRouteChildren: RootRouteChildren = {
   EmergencyRoute: EmergencyRoute,
   GuidanceRoute: GuidanceRoute,
   HomeRoute: HomeRoute,
+  MedicalRoute: MedicalRoute,
   NearbyRoute: NearbyRoute,
   OfflineRoute: OfflineRoute,
   SetupRoute: SetupRoute,
@@ -271,13 +292,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
