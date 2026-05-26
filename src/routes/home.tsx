@@ -18,12 +18,10 @@ import {
   Pill,
   Car,
   CircleDot,
+  AlertTriangle,
 } from "lucide-react";
 
-import {
-  useEffect,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 
 import {
   AppShell,
@@ -57,13 +55,40 @@ type UserData = {
   emergencyContact2Phone?: string;
 };
 
+/**
+ * Pre-fills localStorage with an analysis object and navigates directly to
+ * /analysis — skipping the description screen for known emergency types.
+ */
+function quickDispatch(
+  input: string,
+  type: "Medical Emergency" | "Vehicle Breakdown" | "Fire Emergency" | "Security Emergency" | "General Emergency",
+  severity: "LOW" | "MEDIUM" | "HIGH",
+  nearbyFilter?: string,
+) {
+  const data = {
+    input,
+    type,
+    severity,
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+  localStorage.setItem("roadsos-emergency-input", input);
+  localStorage.setItem("roadsos-analysis", JSON.stringify(data));
+  if (nearbyFilter !== undefined) {
+    localStorage.setItem("roadsos-nearby-filter", nearbyFilter);
+  }
+}
+
 type Tile = {
   label: string;
   desc: string;
   icon: React.ElementType;
   tone: string;
+  /** Where to navigate */
   to: string;
+  /** Run before navigation */
   preNav?: () => void;
+  /** Show a red "urgent" badge */
+  urgent?: boolean;
 };
 
 function Home() {
@@ -79,67 +104,99 @@ function Home() {
 
   const firstName = user?.fullName?.split(" ")[0] || "User";
 
-  // Helper: set filter key so nearby.tsx knows which type to fetch
-  function setFilter(filterKey: string) {
-    localStorage.setItem("roadsos-nearby-filter", filterKey);
-  }
-
   const tiles: Tile[] = [
+    // ── Medical: go through symptom selector → smart hospital matching
     {
-      to: "/emergency",
+      to: "/medical",
       label: "Medical Emergency",
-      desc: "Ambulance & first aid",
+      desc: "Symptom → hospital match",
       icon: Stethoscope,
       tone: "rose",
+      urgent: true,
     },
+
+    // ── Police: instant dispatch
     {
-      to: "/nearby",
+      to: "/analysis",
       label: "Police Help",
       desc: "Nearest police station",
       icon: ShieldCheck,
       tone: "blue",
-      preNav: () => setFilter("police"),
+      urgent: true,
+      preNav: () => {
+        quickDispatch("Need police assistance — security emergency", "Security Emergency", "HIGH", "police");
+      },
     },
+
+    // ── Vehicle Breakdown: instant dispatch
     {
-      to: "/nearby",
+      to: "/analysis",
       label: "Vehicle Breakdown",
       desc: "Towing & mechanic",
       icon: Wrench,
       tone: "amber",
-      preNav: () => setFilter("mechanic"),
+      preNav: () => {
+        quickDispatch("Vehicle breakdown on road — need mechanic or towing", "Vehicle Breakdown", "MEDIUM", "mechanic");
+      },
     },
+
+    // ── Fire: instant dispatch with highest severity
     {
-      to: "/nearby",
+      to: "/analysis",
       label: "Fire Emergency",
       desc: "Nearest fire station",
       icon: Flame,
       tone: "red",
-      preNav: () => setFilter("fire"),
+      urgent: true,
+      preNav: () => {
+        quickDispatch("Fire emergency — flames or smoke detected", "Fire Emergency", "HIGH", "fire");
+      },
     },
+
+    // ── Road Accident: instant dispatch → analysis → nearby trauma
+    {
+      to: "/analysis",
+      label: "Road Accident",
+      desc: "Trauma & ambulance",
+      icon: AlertTriangle,
+      tone: "orange",
+      urgent: true,
+      preNav: () => {
+        quickDispatch("Road accident — injuries possible, ambulance required", "Medical Emergency", "HIGH", "");
+      },
+    },
+
+    // ── Pharmacy: instant nearby
     {
       to: "/nearby",
       label: "Pharmacy",
       desc: "Nearest medical store",
       icon: Pill,
       tone: "teal",
-      preNav: () => setFilter("pharmacy"),
+      preNav: () => localStorage.setItem("roadsos-nearby-filter", "pharmacy"),
     },
+
+    // ── Fuel: instant nearby
     {
       to: "/nearby",
       label: "Fuel Station",
       desc: "Petrol / CNG nearby",
       icon: CircleDot,
-      tone: "orange",
-      preNav: () => setFilter("fuel"),
+      tone: "indigo",
+      preNav: () => localStorage.setItem("roadsos-nearby-filter", "fuel"),
     },
+
+    // ── Car Showroom: instant nearby
     {
       to: "/nearby",
       label: "Car Showroom",
       desc: "Nearest service centre",
       icon: Car,
-      tone: "indigo",
-      preNav: () => setFilter("showroom"),
+      tone: "slate",
+      preNav: () => localStorage.setItem("roadsos-nearby-filter", "showroom"),
     },
+
+    // ── Offline Support
     {
       to: "/offline",
       label: "Offline Support",
@@ -147,6 +204,8 @@ function Home() {
       icon: WifiOff,
       tone: "slate",
     },
+
+    // ── Trip Safety
     {
       to: "/trip",
       label: "Start Safe Trip",
@@ -154,6 +213,8 @@ function Home() {
       icon: Navigation2,
       tone: "green",
     },
+
+    // ── Contacts
     {
       to: "/contacts",
       label: "My Contacts",
@@ -249,8 +310,12 @@ function Home() {
               <button
                 key={tile.label}
                 onClick={() => handleTile(tile)}
-                className="group bg-card border border-border rounded-2xl p-4 shadow-card hover:shadow-elevated transition active:scale-[0.98] text-left w-full"
+                className="group relative bg-card border border-border rounded-2xl p-4 shadow-card hover:shadow-elevated transition active:scale-[0.98] text-left w-full"
               >
+                {/* Urgent badge */}
+                {tile.urgent && (
+                  <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                )}
                 <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${toneMap[tile.tone]}`}>
                   <Icon className="w-5 h-5" />
                 </div>

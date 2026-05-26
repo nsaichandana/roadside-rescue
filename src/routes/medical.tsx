@@ -1,28 +1,31 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ChevronRight, AlertTriangle, Stethoscope } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ChevronRight, AlertTriangle, Stethoscope, Zap, Phone } from "lucide-react";
+import { useState, useEffect } from "react";
+import { getCountryEmergencySync } from "@/utils/countryEmergency";
 
 export const Route = createFileRoute("/medical")({ component: Medical });
 
-// ─── Symptom categories ────────────────────────────────────────────────────
+// ─── Data ─────────────────────────────────────────────────────────────────────
+
+type HospitalHint = "trauma" | "cardiac" | "general" | "burns" | "neuro";
 
 type Symptom = {
   id: string;
   label: string;
   emoji: string;
   severity: "HIGH" | "MEDIUM" | "LOW";
-  // What to search for in nearby (hospital type preference)
-  hospitalHint: "trauma" | "cardiac" | "general" | "burns" | "neuro";
-  // Natural language description fed into analysis
+  hospitalHint: HospitalHint;
   description: string;
+  /** If true, tapping this symptom alone immediately dispatches (no extra confirm) */
+  criticalInstant?: boolean;
 };
 
 type Category = {
   id: string;
   label: string;
   emoji: string;
-  color: string;          // Tailwind bg class for category header
-  textColor: string;      // Tailwind text class
+  gradientFrom: string;
+  gradientTo: string;
   symptoms: Symptom[];
 };
 
@@ -31,71 +34,71 @@ const CATEGORIES: Category[] = [
     id: "cardiac",
     label: "Heart & Chest",
     emoji: "❤️",
-    color: "bg-rose-500",
-    textColor: "text-rose-600",
+    gradientFrom: "from-rose-500",
+    gradientTo: "to-rose-600",
     symptoms: [
-      { id: "chest_pain",     label: "Chest Pain",        emoji: "💔", severity: "HIGH",   hospitalHint: "cardiac",  description: "severe chest pain, possible cardiac event" },
-      { id: "heart_attack",   label: "Heart Attack",      emoji: "🫀", severity: "HIGH",   hospitalHint: "cardiac",  description: "heart attack symptoms, crushing chest pain radiating to arm" },
-      { id: "palpitations",   label: "Palpitations",      emoji: "📳", severity: "MEDIUM", hospitalHint: "cardiac",  description: "irregular heartbeat, palpitations" },
-      { id: "breathless",     label: "Breathlessness",    emoji: "😮‍💨", severity: "HIGH",   hospitalHint: "cardiac",  description: "severe breathlessness, unable to breathe properly" },
+      { id: "heart_attack",   label: "Heart Attack",       emoji: "🫀", severity: "HIGH",   hospitalHint: "cardiac", description: "heart attack, crushing chest pain radiating to arm or jaw",       criticalInstant: true },
+      { id: "chest_pain",     label: "Chest Pain",         emoji: "💔", severity: "HIGH",   hospitalHint: "cardiac", description: "severe chest pain, possible cardiac event" },
+      { id: "breathless",     label: "Can't Breathe",      emoji: "😮‍💨", severity: "HIGH",   hospitalHint: "cardiac", description: "severe breathlessness, unable to breathe properly",             criticalInstant: true },
+      { id: "palpitations",   label: "Irregular Heartbeat",emoji: "📳", severity: "MEDIUM", hospitalHint: "cardiac", description: "irregular heartbeat, palpitations, heart racing" },
     ],
   },
   {
     id: "trauma",
     label: "Injuries & Trauma",
     emoji: "🩹",
-    color: "bg-orange-500",
-    textColor: "text-orange-600",
+    gradientFrom: "from-orange-500",
+    gradientTo: "to-orange-600",
     symptoms: [
-      { id: "head_injury",    label: "Head Injury",       emoji: "🤕", severity: "HIGH",   hospitalHint: "neuro",    description: "head injury, possible concussion or skull fracture" },
-      { id: "severe_bleed",   label: "Severe Bleeding",   emoji: "🩸", severity: "HIGH",   hospitalHint: "trauma",   description: "severe uncontrolled bleeding from wound" },
-      { id: "fracture",       label: "Fracture / Broken", emoji: "🦴", severity: "MEDIUM", hospitalHint: "trauma",   description: "suspected fracture or broken bone" },
-      { id: "spinal",         label: "Back / Spine",      emoji: "🦾", severity: "HIGH",   hospitalHint: "neuro",    description: "possible spinal injury, do not move patient" },
-      { id: "burns",          label: "Burns",             emoji: "🔥", severity: "HIGH",   hospitalHint: "burns",    description: "burn injuries requiring emergency treatment" },
+      { id: "head_injury",    label: "Head Injury",        emoji: "🤕", severity: "HIGH",   hospitalHint: "neuro",   description: "head injury, possible concussion or skull fracture, do not move", criticalInstant: true },
+      { id: "severe_bleed",   label: "Severe Bleeding",    emoji: "🩸", severity: "HIGH",   hospitalHint: "trauma",  description: "severe uncontrolled bleeding from wound" },
+      { id: "spinal",         label: "Neck / Spine",       emoji: "🦾", severity: "HIGH",   hospitalHint: "neuro",   description: "possible spinal or neck injury, do not move patient",           criticalInstant: true },
+      { id: "fracture",       label: "Fracture / Broken",  emoji: "🦴", severity: "MEDIUM", hospitalHint: "trauma",  description: "suspected fracture or broken bone" },
+      { id: "burns",          label: "Burns",              emoji: "🔥", severity: "HIGH",   hospitalHint: "burns",   description: "burn injuries requiring emergency treatment" },
     ],
   },
   {
     id: "neuro",
     label: "Brain & Nervous",
     emoji: "🧠",
-    color: "bg-purple-500",
-    textColor: "text-purple-600",
+    gradientFrom: "from-purple-500",
+    gradientTo: "to-purple-600",
     symptoms: [
-      { id: "stroke",         label: "Stroke",            emoji: "⚡", severity: "HIGH",   hospitalHint: "neuro",    description: "stroke symptoms — face drooping, arm weakness, speech difficulty" },
-      { id: "unconscious",    label: "Unconscious",       emoji: "😵", severity: "HIGH",   hospitalHint: "trauma",   description: "person is unconscious, not responding" },
-      { id: "seizure",        label: "Seizure / Fit",     emoji: "⚠️", severity: "HIGH",   hospitalHint: "neuro",    description: "epileptic seizure or fit, convulsions" },
-      { id: "confusion",      label: "Sudden Confusion",  emoji: "😵‍💫", severity: "MEDIUM", hospitalHint: "neuro",    description: "sudden confusion, disorientation, altered mental state" },
+      { id: "stroke",         label: "Stroke",             emoji: "⚡", severity: "HIGH",   hospitalHint: "neuro",   description: "stroke — face drooping, arm weakness, speech difficulty",       criticalInstant: true },
+      { id: "unconscious",    label: "Unconscious",        emoji: "😵", severity: "HIGH",   hospitalHint: "trauma",  description: "person is unconscious, not responding",                        criticalInstant: true },
+      { id: "seizure",        label: "Seizure / Fit",      emoji: "⚠️",  severity: "HIGH",   hospitalHint: "neuro",   description: "epileptic seizure or fit, convulsions" },
+      { id: "confusion",      label: "Sudden Confusion",   emoji: "😵‍💫", severity: "MEDIUM", hospitalHint: "neuro",   description: "sudden confusion, disorientation, altered mental state" },
     ],
   },
   {
     id: "breathing",
     label: "Breathing",
     emoji: "🫁",
-    color: "bg-blue-500",
-    textColor: "text-blue-600",
+    gradientFrom: "from-blue-500",
+    gradientTo: "to-blue-600",
     symptoms: [
-      { id: "not_breathing",  label: "Not Breathing",     emoji: "🫁", severity: "HIGH",   hospitalHint: "trauma",   description: "patient is not breathing, requires CPR" },
-      { id: "asthma",         label: "Asthma Attack",     emoji: "🌬️", severity: "HIGH",   hospitalHint: "general",  description: "severe asthma attack, cannot breathe" },
-      { id: "choking",        label: "Choking",           emoji: "🤧", severity: "HIGH",   hospitalHint: "general",  description: "person is choking, airway obstructed" },
-      { id: "allergic",       label: "Allergic Reaction", emoji: "🐝", severity: "HIGH",   hospitalHint: "general",  description: "severe allergic reaction, anaphylaxis possible" },
+      { id: "not_breathing",  label: "Not Breathing",      emoji: "🫁", severity: "HIGH",   hospitalHint: "trauma",  description: "patient is not breathing, requires CPR immediately",          criticalInstant: true },
+      { id: "choking",        label: "Choking",            emoji: "🤧", severity: "HIGH",   hospitalHint: "general", description: "person is choking, airway obstructed",                        criticalInstant: true },
+      { id: "asthma",         label: "Asthma Attack",      emoji: "🌬️", severity: "HIGH",   hospitalHint: "general", description: "severe asthma attack, cannot breathe" },
+      { id: "allergic",       label: "Allergic / Anaphylaxis", emoji: "🐝", severity: "HIGH", hospitalHint: "general", description: "severe allergic reaction, anaphylaxis possible" },
     ],
   },
   {
     id: "general",
     label: "Other",
     emoji: "🏥",
-    color: "bg-teal-500",
-    textColor: "text-teal-600",
+    gradientFrom: "from-teal-500",
+    gradientTo: "to-teal-600",
     symptoms: [
-      { id: "poisoning",      label: "Poisoning",         emoji: "☠️", severity: "HIGH",   hospitalHint: "general",  description: "suspected poisoning or overdose" },
-      { id: "diabetic",       label: "Diabetic Emergency", emoji: "💉", severity: "HIGH",   hospitalHint: "general",  description: "diabetic emergency, very low or high blood sugar" },
-      { id: "pain_severe",    label: "Severe Pain",       emoji: "😣", severity: "MEDIUM", hospitalHint: "general",  description: "severe unbearable pain requiring urgent medical attention" },
-      { id: "pregnancy",      label: "Pregnancy Crisis",  emoji: "🤰", severity: "HIGH",   hospitalHint: "general",  description: "pregnancy emergency, labour or complications" },
+      { id: "poisoning",      label: "Poisoning / Overdose", emoji: "☠️", severity: "HIGH",  hospitalHint: "general", description: "suspected poisoning or drug overdose" },
+      { id: "diabetic",       label: "Diabetic Emergency", emoji: "💉", severity: "HIGH",   hospitalHint: "general", description: "diabetic emergency, very low or high blood sugar" },
+      { id: "pregnancy",      label: "Pregnancy Crisis",   emoji: "🤰", severity: "HIGH",   hospitalHint: "general", description: "pregnancy emergency, labour or complications" },
+      { id: "pain_severe",    label: "Severe Pain",        emoji: "😣", severity: "MEDIUM", hospitalHint: "general", description: "severe unbearable pain requiring urgent medical attention" },
     ],
   },
 ];
 
-// ─── Severity helpers ──────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getOverallSeverity(selected: Symptom[]): "HIGH" | "MEDIUM" | "LOW" {
   if (selected.some((s) => s.severity === "HIGH")) return "HIGH";
@@ -103,26 +106,49 @@ function getOverallSeverity(selected: Symptom[]): "HIGH" | "MEDIUM" | "LOW" {
   return "LOW";
 }
 
+/**
+ * Pick the most relevant hospital type hint.
+ * Priority: neuro > cardiac > burns > trauma > general
+ */
+function getBestHospitalHint(selected: Symptom[]): HospitalHint {
+  if (selected.some((s) => s.hospitalHint === "neuro"))    return "neuro";
+  if (selected.some((s) => s.hospitalHint === "cardiac"))  return "cardiac";
+  if (selected.some((s) => s.hospitalHint === "burns"))    return "burns";
+  if (selected.some((s) => s.hospitalHint === "trauma"))   return "trauma";
+  return "general";
+}
+
 function buildAnalysisInput(selected: Symptom[]): string {
   if (selected.length === 0) return "Medical emergency, symptoms not specified";
-  const desc = selected.map((s) => s.description).join("; ");
-  return `Medical emergency — patient presenting with: ${desc}`;
+  return `Medical emergency — patient presenting with: ${selected.map((s) => s.description).join("; ")}`;
 }
 
-function getSeverityStyle(sev: "HIGH" | "MEDIUM" | "LOW") {
-  switch (sev) {
-    case "HIGH":   return "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300";
-    case "MEDIUM": return "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
-    default:       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
-  }
+function severityDot(sev: "HIGH" | "MEDIUM" | "LOW") {
+  if (sev === "HIGH")   return "bg-red-500";
+  if (sev === "MEDIUM") return "bg-amber-500";
+  return "bg-emerald-500";
 }
 
-// ─── Component ────────────────────────────────────────────────────────────
+function severityPill(sev: "HIGH" | "MEDIUM" | "LOW") {
+  if (sev === "HIGH")   return "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300";
+  if (sev === "MEDIUM") return "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
+  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 function Medical() {
   const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedCat, setExpandedCat] = useState<string | null>("cardiac");
+
+  // Country emergency numbers for the "Call Now" shortcut
+  const c = getCountryEmergencySync();
+
+  const allSymptoms: Symptom[] = CATEGORIES.flatMap((cat) => cat.symptoms);
+  const selectedSymptoms = allSymptoms.filter((s) => selectedIds.has(s.id));
+  const severity = getOverallSeverity(selectedSymptoms);
+  const canAnalyze = selectedIds.size > 0;
 
   function toggle(symptom: Symptom) {
     setSelectedIds((prev) => {
@@ -133,39 +159,48 @@ function Medical() {
     });
   }
 
-  const selectedSymptoms: Symptom[] = CATEGORIES.flatMap((c) =>
-    c.symptoms.filter((s) => selectedIds.has(s.id))
-  );
+  /** Dispatch analysis (called by both button and immediate-critical path) */
+  function dispatch(symptoms: Symptom[]) {
+    const input = buildAnalysisInput(symptoms);
+    const sev = getOverallSeverity(symptoms);
+    const hint = getBestHospitalHint(symptoms);
 
-  const severity = getOverallSeverity(selectedSymptoms);
-  const canAnalyze = selectedIds.size > 0;
-
-  function handleAnalyze() {
-    if (!canAnalyze) return;
-
-    const input = buildAnalysisInput(selectedSymptoms);
     const data = {
       input,
       type: "Medical Emergency",
-      severity,
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      // Pass hospital hint so nearby.tsx can filter appropriately
-      hospitalHint: selectedSymptoms[0]?.hospitalHint ?? "general",
+      severity: sev,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      hospitalHint: hint,
     };
 
     localStorage.setItem("roadsos-emergency-input", input);
     localStorage.setItem("roadsos-analysis", JSON.stringify(data));
-    // Ensure nearby defaults to hospitals
     localStorage.setItem("roadsos-nearby-filter", "");
-
     navigate({ to: "/analysis" });
   }
 
+  /** Critical instant symptoms: tap once → immediate dispatch */
+  function handleInstantSymptom(symptom: Symptom) {
+    dispatch([symptom]);
+  }
+
+  function handleAnalyze() {
+    if (!canAnalyze) return;
+    dispatch(selectedSymptoms);
+  }
+
+  // Derive the best hospital type label for the CTA hint
+  const hintLabel: Record<HospitalHint, string> = {
+    neuro:   "Neuro / Trauma Centre",
+    cardiac: "Cardiac Hospital",
+    burns:   "Burns Unit",
+    trauma:  "Trauma Centre",
+    general: "General Hospital",
+  };
+  const bestHint = canAnalyze ? hintLabel[getBestHospitalHint(selectedSymptoms)] : null;
+
   return (
-    <div className="min-h-screen bg-background pb-32">
+    <div className="min-h-screen bg-background pb-36">
       {/* Header */}
       <header className="px-5 pt-6 pb-4 flex items-center gap-3">
         <button
@@ -177,12 +212,58 @@ function Medical() {
         <div>
           <h1 className="text-xl font-bold">Medical Emergency</h1>
           <p className="text-xs text-muted-foreground">
-            Select all symptoms — AI matches the right hospital
+            Select symptoms → AI matches the right hospital
           </p>
         </div>
       </header>
 
-      {/* Selected chips summary */}
+      {/* ── CALL NOW shortcut ── */}
+      <div className="px-5 mb-4">
+        <a
+          href={`tel:${c.ambulance}`}
+          className="flex items-center justify-between bg-gradient-to-r from-rose-500 to-rose-600 text-white rounded-2xl px-5 py-3.5 shadow-lg active:scale-[0.98] transition"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <Phone className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="font-black text-base leading-tight">Call {c.ambulance} Now</p>
+              <p className="text-xs text-white/80">Ambulance · {c.countryName}</p>
+            </div>
+          </div>
+          <span className="text-white/80 text-xs font-semibold">Skip selection</span>
+        </a>
+      </div>
+
+      {/* Divider */}
+      <div className="px-5 mb-4 flex items-center gap-3">
+        <div className="flex-1 h-px bg-border" />
+        <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">or select symptoms</p>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+
+      {/* ── Critical instant chips (no multi-select needed) ── */}
+      <section className="px-5 mb-5">
+        <div className="flex items-center gap-2 mb-2.5">
+          <Zap className="w-4 h-4 text-destructive" />
+          <p className="text-sm font-bold text-destructive">Critical — tap once for instant dispatch</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {allSymptoms.filter((s) => s.criticalInstant).map((s) => (
+            <button
+              key={s.id}
+              onClick={() => handleInstantSymptom(s)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-destructive/10 text-destructive border border-destructive/30 text-sm font-semibold active:scale-95 transition hover:bg-destructive/20"
+            >
+              {s.emoji} {s.label}
+              <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Selected symptoms summary ── */}
       {selectedSymptoms.length > 0 && (
         <div className="px-5 mb-4">
           <div className={`rounded-2xl px-4 py-3 flex items-start gap-3 ${
@@ -195,18 +276,20 @@ function Medical() {
             }`} />
             <div className="flex-1 min-w-0">
               <p className={`text-xs font-bold ${severity === "HIGH" ? "text-destructive" : "text-amber-700 dark:text-amber-300"}`}>
-                {severity === "HIGH" ? "⚠️ HIGH severity detected — immediate care required" : `${severity} severity`}
+                {severity === "HIGH"
+                  ? `⚠️ HIGH severity — routing to ${bestHint}`
+                  : `${severity} severity · ${bestHint}`}
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {selectedSymptoms.map((s) => (
                   <span
                     key={s.id}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${getSeverityStyle(s.severity)}`}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${severityPill(s.severity)}`}
                   >
                     {s.emoji} {s.label}
                     <button
                       onClick={() => toggle(s)}
-                      className="ml-0.5 opacity-60 hover:opacity-100"
+                      className="ml-0.5 opacity-60 hover:opacity-100 text-sm leading-none"
                     >
                       ×
                     </button>
@@ -218,7 +301,7 @@ function Medical() {
         </div>
       )}
 
-      {/* Categories */}
+      {/* ── Category accordion ── */}
       <div className="px-5 space-y-3">
         {CATEGORIES.map((cat) => {
           const isOpen = expandedCat === cat.id;
@@ -226,10 +309,9 @@ function Medical() {
 
           return (
             <div key={cat.id} className="rounded-2xl overflow-hidden border border-border shadow-card bg-card">
-              {/* Category header */}
               <button
                 onClick={() => setExpandedCat(isOpen ? null : cat.id)}
-                className={`w-full text-left px-4 py-3.5 flex items-center justify-between ${cat.color} text-white`}
+                className={`w-full text-left px-4 py-3.5 flex items-center justify-between bg-gradient-to-r ${cat.gradientFrom} ${cat.gradientTo} text-white`}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-lg">{cat.emoji}</span>
@@ -240,12 +322,9 @@ function Medical() {
                     </span>
                   )}
                 </div>
-                <ChevronRight
-                  className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`}
-                />
+                <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`} />
               </button>
 
-              {/* Symptom grid */}
               {isOpen && (
                 <div className="p-3 grid grid-cols-2 gap-2">
                   {cat.symptoms.map((symptom) => {
@@ -261,19 +340,9 @@ function Medical() {
                         }`}
                       >
                         {/* Severity dot */}
-                        <span
-                          className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-                            symptom.severity === "HIGH"
-                              ? "bg-red-500"
-                              : symptom.severity === "MEDIUM"
-                              ? "bg-amber-500"
-                              : "bg-emerald-500"
-                          }`}
-                        />
+                        <span className={`absolute top-2 right-2 w-2 h-2 rounded-full ${severityDot(symptom.severity)} ${symptom.severity === "HIGH" ? "animate-pulse" : ""}`} />
                         <span className="text-lg block mb-1">{symptom.emoji}</span>
-                        <span className="text-xs font-semibold leading-tight block">
-                          {symptom.label}
-                        </span>
+                        <span className="text-xs font-semibold leading-tight block">{symptom.label}</span>
                         {selected && (
                           <span className="text-[10px] text-primary font-bold mt-0.5 block">✓ Selected</span>
                         )}
@@ -289,29 +358,32 @@ function Medical() {
 
       {/* Severity legend */}
       <div className="px-5 mt-4">
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> Critical</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Urgent</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Moderate</span>
+        <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block animate-pulse" /> Critical / Instant</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Urgent</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Moderate</span>
         </div>
       </div>
 
-      {/* Fixed bottom CTA */}
+      {/* ── Fixed bottom CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-5 pb-6 pt-3 bg-gradient-to-t from-background via-background to-transparent">
-        <div className="max-w-2xl mx-auto space-y-3">
-          {/* "No symptoms yet" hint */}
-          {!canAnalyze && (
-            <p className="text-center text-xs text-muted-foreground">
-              Tap symptoms above to select, then get AI analysis
+        <div className="max-w-2xl mx-auto space-y-2">
+          {bestHint && (
+            <p className="text-center text-xs text-muted-foreground font-medium">
+              🏥 Routing to nearest <span className="text-foreground font-bold">{bestHint}</span>
             </p>
           )}
-
+          {!canAnalyze && (
+            <p className="text-center text-xs text-muted-foreground">
+              Select symptoms above — or use the instant dispatch chips
+            </p>
+          )}
           <button
             onClick={handleAnalyze}
             disabled={!canAnalyze}
-            className={`w-full inline-flex items-center justify-center gap-2 font-bold py-4 rounded-2xl shadow-emergency transition ${
+            className={`w-full inline-flex items-center justify-center gap-2 font-bold py-4 rounded-2xl transition ${
               canAnalyze
-                ? "bg-gradient-emergency text-emergency-foreground active:scale-[0.98]"
+                ? "bg-gradient-emergency text-emergency-foreground shadow-emergency active:scale-[0.98]"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             }`}
           >

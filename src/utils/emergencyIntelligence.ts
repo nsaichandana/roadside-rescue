@@ -6,7 +6,7 @@
 import {
   type CountryEmergency,
   getCountryEmergencySync,
-} from "./countryEmergency";
+} from "@/utils/countryEmergency";
 
 export type EmergencySeverity = "Critical" | "High" | "Moderate" | "Low";
 
