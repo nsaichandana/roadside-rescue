@@ -12,6 +12,8 @@ import {
   Clock,
   AlertTriangle,
 } from "lucide-react";
+import { sendVisFast2SMS } from "@/routes/sos";
+import { normalisePhoneForCountry } from "@/utils/countryEmergency";
 
 import { useEffect, useState } from "react";
 
@@ -95,17 +97,29 @@ function removeSosEntry(id: string) {
  */
 async function retrySosEntry(entry: SosQueueEntry): Promise<boolean> {
   try {
-    const res = await fetch("/api/sos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: entry.message,
-        location: entry.location,
-        contacts: entry.contacts,
-      }),
-    });
-    return res.ok;
-  } catch {
+    const res = await sendVisFast2SMS(entry.contacts, entry.message);
+    return res.success.length > 0;
+  } catch (err) {
+    // If Fast2SMS fails, fallback to opening SMS app (works on user click)
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if (isIOS) {
+      entry.contacts.forEach((contact, i) => {
+        setTimeout(() => {
+          const a = document.createElement("a");
+          a.href = `sms:${contact}&body=${encodeURIComponent(entry.message)}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }, i * 1000);
+      });
+    } else {
+      const numbers = entry.contacts.join(";");
+      const a = document.createElement("a");
+      a.href = `sms:${numbers}?body=${encodeURIComponent(entry.message)}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
     return false;
   }
 }

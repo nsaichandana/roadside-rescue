@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { EmergencyFallback } from "@/components/EmergencyFallback";
 import {
   Siren, MapPin, Check, Phone, Clock3,
   ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
@@ -9,7 +10,10 @@ import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/countryEmergency";
 
-export const Route = createFileRoute("/sos")({ component: SOS });
+export const Route = createFileRoute("/sos")({
+  component: SOS,
+  errorComponent: EmergencyFallback,
+});
 
 // ── Fast2SMS silent send ──────────────────────────────────────────────────────
 type SendStatus = {
@@ -18,7 +22,7 @@ type SendStatus = {
   status: "sending" | "sent" | "failed";
 };
 
-async function sendVisFast2SMS(
+export async function sendVisFast2SMS(
   phones: string[],
   message: string
 ): Promise<{ success: string[]; failed: string[] }> {
@@ -285,14 +289,7 @@ function SOS() {
     setTime(currentTime);
     setSent(true);
 
-    if (!navigator.onLine) {
-      localStorage.setItem("roadsos-sos-queue", JSON.stringify({
-        ts: currentTime,
-        userId: user.fullName,
-        queued: true,
-      }));
-      setRetryQueued(true);
-    }
+    // Removed early queueing, moved to the bottom where msgText and contacts are ready.
 
     const cachedPlaces = localStorage.getItem("roadsos-last-places");
     let nearestHospital = "Nearest emergency service";
@@ -370,6 +367,24 @@ function SOS() {
             document.body.removeChild(a);
           }
         });
+    }
+
+    if (!navigator.onLine) {
+      try {
+        const queueRaw = localStorage.getItem("roadsos-sos-queue");
+        const queueArr = Array.isArray(queueRaw ? JSON.parse(queueRaw) : []) ? (queueRaw ? JSON.parse(queueRaw) : []) : [];
+        queueArr.push({
+          id: Math.random().toString(36).substring(7),
+          timestamp: currentTime,
+          message: msgText,
+          location: address || "Unknown Location",
+          contacts: allPhones.map((c) => c.phone),
+          retries: 0,
+          status: "pending"
+        });
+        localStorage.setItem("roadsos-sos-queue", JSON.stringify(queueArr));
+        setRetryQueued(true);
+      } catch { /* ignore */ }
     }
 
     emergencyPhones.forEach((contact, i) => {

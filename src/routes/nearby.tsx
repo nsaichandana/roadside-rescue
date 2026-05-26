@@ -25,6 +25,7 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
+import { EmergencyFallback } from "@/components/EmergencyFallback";
 import {
   Phone, Navigation, Star, MapPin,
   Loader2, AlertTriangle, Clock3, ShieldAlert, MessageSquare,
@@ -63,7 +64,10 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     markerShadow,
 });
 
-export const Route = createFileRoute("/nearby")({ component: Nearby });
+export const Route = createFileRoute("/nearby")({
+  component: Nearby,
+  errorComponent: EmergencyFallback,
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

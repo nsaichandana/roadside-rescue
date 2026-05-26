@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { EmergencyFallback } from "@/components/EmergencyFallback";
 import {
   ArrowLeft, AlertTriangle, Stethoscope,
   Zap, Phone, Heart, Brain, Wind, Activity, Plus,
@@ -6,7 +7,10 @@ import {
 import { useState } from "react";
 import { getCountryEmergencySync } from "@/utils/countryEmergency";
 
-export const Route = createFileRoute("/medical")({ component: Medical });
+export const Route = createFileRoute("/medical")({
+  component: Medical,
+  errorComponent: EmergencyFallback,
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

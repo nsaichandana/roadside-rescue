@@ -1,6 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { Home, Zap, Map, Shield, Users, Siren } from "lucide-react";
-import { ReactNode } from "react";
+import { Home, Zap, Map, Shield, Users, Siren, WifiOff, Navigation2 } from "lucide-react";
+import { ReactNode, useState, useEffect } from "react";
 
 const navItems = [
   { to: "/home",      label: "Home",      icon: Home   },
@@ -86,14 +86,33 @@ export function ScreenHeader({
 }
 
 export function StatusBar() {
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   return (
     <div className="mx-5 mb-4 flex items-center gap-2 text-xs">
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> GPS
       </span>
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
-        <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> Online
-      </span>
+      {isOnline ? (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> Online
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive/10 text-destructive font-medium">
+          <WifiOff className="w-3 h-3" /> Offline Mode
+        </span>
+      )}
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium ml-auto">
         Battery 87%
       </span>

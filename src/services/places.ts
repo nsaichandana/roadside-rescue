@@ -437,16 +437,17 @@ export async function fetchNearbyPlaces(
         })
         .filter((p): p is NearbyPlace => p !== null);
 
-      const sorted = places.sort((a, b) => b.score - a.score).slice(0, 10);
+      const sorted = places.sort((a, b) => b.score - a.score).slice(0, 20);
 
       if (sorted.length > 0) {
         try {
-          const offlineCache = sorted.slice(0, 5).map((p) => ({
+          const offlineCache = sorted.map((p) => ({
             name:     p.name,
             type:     p.type,
             distance: `${p.distance} km`,
             lat:      p.latitude,
             lon:      p.longitude,
+            phone:    p.phone,
           }));
           localStorage.setItem("roadsos-last-places",      JSON.stringify(offlineCache));
           localStorage.setItem("roadsos-last-sync",        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));

@@ -2,6 +2,7 @@ import {
   createFileRoute,
   useNavigate,
 } from "@tanstack/react-router";
+import { EmergencyFallback } from "@/components/EmergencyFallback";
 
 import {
   Mic,
@@ -21,6 +22,7 @@ import {
 
 export const Route = createFileRoute("/emergency")({
   component: Emergency,
+  errorComponent: EmergencyFallback,
 });
 
 // ─── Chips ────────────────────────────────────────────────────────────────────
