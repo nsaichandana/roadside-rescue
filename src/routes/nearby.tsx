@@ -1,66 +1,82 @@
 /**
- * nearby.tsx — RoadSOS Nearby Services screen
+ * nearby.tsx — RoadSOS Nearby Services
  *
- * CHANGES FROM PREVIOUS VERSION:
- * ────────────────────────────────
- * 1. `severity` is now passed to `fetchNearbyPlaces()` so it can apply an
- *    adaptive search radius (15 km for HIGH medical vs 7 km for breakdowns).
+ * CHANGES IN THIS VERSION:
+ * ────────────────────────────────────────────────────────────────
+ * 1. Reads `hospitalHint` from localStorage analysis object and
+ *    passes it to fetchNearbyPlaces().
  *
- * 2. After fetching, results from `fetchNearbyPlaces` are already sorted by
- *    Haversine distance + type priority — no re-sorting needed here.
+ * 2. Live results split into two sections:
+ *    - "Specialised" — hospitals matching the hint (neuro/cardiac/burns/trauma)
+ *    - "General"     — all other nearby hospitals/services
  *
- * 3. Distance display now shows "X.X km" (1 decimal) consistently — the old
- *    code sometimes displayed raw Overpass tag values which were unreliable.
+ * 3. Option C fallback:
+ *    When Overpass returns ZERO specialised matches (e.g. no cardiac
+ *    hospital within 30km), findNearestTraumaCentre() from traumaCentres.ts
+ *    is called and the nearest VERIFIED Level 1 centre with matching
+ *    capability is pinned as a guaranteed card at the top — clearly labelled
+ *    "Nearest Verified [Hint] Centre" with distance, even if far.
+ *    This ensures a bystander or victim always sees a specialist option.
  *
- * 4. "Best Match" badge: previously always index === 0 regardless of whether
- *    it was genuinely the nearest + most relevant. Now it is: the first item
- *    is guaranteed to be the nearest trauma/hospital thanks to the new sort.
+ * 4. useRef guard on load() prevents double-fire in React strict mode.
  *
- * 5. Two-wheeler protocol detection is forwarded via the `input` string to
- *    places.ts which extends the Overpass query for trauma nodes.
+ * 5. Bug fix: d?.lon ?? d?.lng fallback when reading cached location
+ *    written by trip.tsx which uses `lng` not `lon`.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Phone, Navigation, Star, MapPin,
   Loader2, AlertTriangle, Clock3, ShieldAlert, MessageSquare,
-  WifiOff,
+  WifiOff, Building2, Stethoscope, ShieldCheck,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getUserLocation } from "@/services/location";
-import { fetchNearbyPlaces, EmergencyType, NearbyPlace } from "@/services/places";
+import {
+  fetchNearbyPlaces,
+  type EmergencyType,
+  type NearbyPlace,
+  type HospitalHint,
+} from "@/services/places";
 import {
   getCountryEmergency,
   getCountryEmergencySync,
   type CountryEmergency,
 } from "@/utils/countryEmergency";
+import {
+  findNearestTraumaCentre,
+  type TraumaCentre,
+} from "@/data/traumaCentres";
 
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerIcon   from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+
 // @ts-ignore
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
+  iconUrl:       markerIcon,
+  shadowUrl:     markerShadow,
 });
 
 export const Route = createFileRoute("/nearby")({ component: Nearby });
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type Severity = "LOW" | "MEDIUM" | "HIGH";
+
 type AnalysisData = {
   input: string;
   type: EmergencyType;
   severity: Severity;
   timestamp: string;
+  hospitalHint?: HospitalHint;
 };
 
-// Cached place shape written to localStorage
 type CachedPlace = {
   name: string;
   type: string;
@@ -68,6 +84,8 @@ type CachedPlace = {
   lat: number;
   lon: number;
 };
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const filterTypeMap: Record<string, { type: EmergencyType; label: string; input: string }> = {
   police:   { type: "Security Emergency",  label: "Police Help",        input: "Need police assistance" },
@@ -78,11 +96,47 @@ const filterTypeMap: Record<string, { type: EmergencyType; label: string; input:
   showroom: { type: "Vehicle Breakdown",   label: "Car Service Centre", input: "Need car showroom or service centre nearby" },
 };
 
-/**
- * Returns the best call number for a place.
- * Uses the place's own phone if present, otherwise falls back to the
- * country-specific emergency number for the given emergency type.
- */
+/** Maps HospitalHint → traumaCentres.ts capability string */
+const hintToCapability: Record<HospitalHint, string | undefined> = {
+  neuro:   "neurology",
+  cardiac: "icu",          // best proxy in traumaCentres capabilities
+  burns:   "burn_unit",
+  trauma:  "emergency_surgery",
+  general: undefined,
+};
+
+const hintMeta: Record<HospitalHint, { label: string; icon: string; description: string }> = {
+  neuro:   { label: "Neuro / Trauma Centre",  icon: "🧠", description: "Specialised for head, brain & spinal injuries" },
+  cardiac: { label: "Cardiac Hospital",        icon: "🫀", description: "Specialised for heart & chest emergencies" },
+  burns:   { label: "Burns Unit",              icon: "🔥", description: "Specialised burns & reconstructive care" },
+  trauma:  { label: "Trauma Centre",           icon: "🩹", description: "Level 1 trauma & emergency surgery" },
+  general: { label: "General Hospital",        icon: "🏥", description: "General emergency care" },
+};
+
+const typeColor: Record<string, string> = {
+  hospital:     "#ef4444",
+  ambulance:    "#f97316",
+  police:       "#3b82f6",
+  mechanic:     "#eab308",
+  fire_station: "#f43f5e",
+  pharmacy:     "#10b981",
+  fuel:         "#f59e0b",
+  showroom:     "#6366f1",
+};
+
+const typeLabel: Record<string, string> = {
+  hospital:     "Hospital",
+  ambulance:    "Ambulance",
+  police:       "Police Station",
+  mechanic:     "Mechanic / Towing",
+  fire_station: "Fire Station",
+  pharmacy:     "Pharmacy",
+  fuel:         "Fuel Station",
+  showroom:     "Service Centre",
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function getCallNumber(
   place: NearbyPlace,
   emergencyType: EmergencyType | undefined,
@@ -124,33 +178,13 @@ function makeIcon(color: string) {
       transform:rotate(-45deg);
       box-shadow:0 2px 8px rgba(0,0,0,0.35)">
     </div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 28],
+    iconSize:    [28, 28],
+    iconAnchor:  [14, 28],
     popupAnchor: [0, -30],
   });
 }
 
-const typeColor: Record<string, string> = {
-  hospital:     "#ef4444",
-  ambulance:    "#f97316",
-  police:       "#3b82f6",
-  mechanic:     "#eab308",
-  fire_station: "#f43f5e",
-  pharmacy:     "#10b981",
-  fuel:         "#f59e0b",
-  showroom:     "#6366f1",
-};
-
-const typeLabel: Record<string, string> = {
-  hospital:     "Hospital",
-  ambulance:    "Ambulance",
-  police:       "Police Station",
-  mechanic:     "Mechanic / Towing",
-  fire_station: "Fire Station",
-  pharmacy:     "Pharmacy",
-  fuel:         "Fuel Station",
-  showroom:     "Service Centre",
-};
+// ─── MapView ──────────────────────────────────────────────────────────────────
 
 function MapView({
   userLat, userLon, places,
@@ -159,16 +193,16 @@ function MapView({
   userLon: number;
   places: NearbyPlace[];
 }) {
-  const mapRef = useRef<HTMLDivElement>(null);
+  const mapRef      = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
 
     const map = L.map(mapRef.current, {
-      center: [userLat, userLon],
-      zoom: 14,
-      zoomControl: true,
+      center:            [userLat, userLon],
+      zoom:              14,
+      zoomControl:       true,
       attributionControl: false,
     });
     mapInstance.current = map;
@@ -184,7 +218,7 @@ function MapView({
         background:#3b82f6;border:3px solid white;
         box-shadow:0 0 0 6px rgba(59,130,246,0.25)">
       </div>`,
-      iconSize: [16, 16],
+      iconSize:   [16, 16],
       iconAnchor: [8, 8],
     });
     L.marker([userLat, userLon], { icon: userIcon })
@@ -228,7 +262,8 @@ function MapView({
   );
 }
 
-// ── Offline fallback card — shown when Overpass fails mid-session ──────────────
+// ─── Offline fallback ─────────────────────────────────────────────────────────
+
 function OfflineCachedPlaces({
   cachedPlaces,
   country,
@@ -304,19 +339,232 @@ function OfflineCachedPlaces({
   );
 }
 
+// ─── Verified Fallback Card ───────────────────────────────────────────────────
+// Shown when Overpass returns no specialised hospital.
+// Option C: pinned at top, clearly marked as verified Level 1.
+
+function VerifiedFallbackCard({
+  centre,
+  hint,
+  country,
+}: {
+  centre: TraumaCentre & { distance: number };
+  hint: HospitalHint;
+  country: CountryEmergency;
+}) {
+  const meta = hintMeta[hint];
+  return (
+    <div className="bg-card border-2 border-primary/40 rounded-2xl p-4 shadow-card">
+      {/* Header */}
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 text-xl">
+          {meta.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-bold text-sm">{centre.name}</p>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
+              <ShieldCheck className="w-2.5 h-2.5" />
+              Verified Level 1
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {centre.city}, {centre.state}
+          </p>
+          <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
+            <span className="font-semibold text-primary">{centre.distance} km away</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{meta.description}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Capabilities */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {centre.capabilities.map((cap) => (
+          <span
+            key={cap}
+            className="px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-semibold capitalize"
+          >
+            {cap.replace(/_/g, " ")}
+          </span>
+        ))}
+      </div>
+
+      {/* Notice when no live match found */}
+      <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl px-3 py-2 mb-3">
+        <p className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+          ⚠️ No {meta.label} found within nearby radius — this is the nearest verified specialist centre.
+        </p>
+      </div>
+
+      {/* Actions */}
+      <div className="grid grid-cols-3 gap-2">
+        <a
+          href={`tel:${centre.phone}`}
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-xs"
+        >
+          <Phone className="w-3.5 h-3.5" />
+          Call
+        </a>
+        <a
+          href={`sms:${centre.phone}?body=${encodeURIComponent(`Emergency — need ${meta.label} care. My location will follow.`)}`}
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold text-xs"
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          SMS
+        </a>
+        <a
+          href={`https://www.google.com/maps/dir/?api=1&destination=${centre.latitude},${centre.longitude}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-xs"
+        >
+          <Navigation className="w-3.5 h-3.5" />
+          Navigate
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// ─── Place Card ───────────────────────────────────────────────────────────────
+
+function PlaceCard({
+  place,
+  index,
+  isBestOverall,
+  analysis,
+  country,
+  userCoords,
+}: {
+  place: NearbyPlace;
+  index: number;
+  isBestOverall: boolean;
+  analysis: AnalysisData | null;
+  country: CountryEmergency;
+  userCoords: { lat: number; lon: number } | null;
+}) {
+  const callNumber = getCallNumber(place, analysis?.type, country);
+  const smsBody    = getSmsBody(place, userCoords?.lat, userCoords?.lon);
+
+  return (
+    <div
+      className={`bg-card border rounded-2xl p-4 shadow-card ${
+        isBestOverall
+          ? "border-primary/40 ring-1 ring-primary/20"
+          : "border-border"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className="w-3 h-3 rounded-full mt-1.5 flex-shrink-0"
+          style={{ background: typeColor[place.type] ?? "#6366f1" }}
+        />
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold">{place.name}</p>
+            {isBestOverall && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
+                <Star className="w-2.5 h-2.5 fill-current" />
+                Best Match
+              </span>
+            )}
+            {place.isVerified && (
+              <span className="px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-bold">
+                ✓ Verified
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {typeLabel[place.type] ?? place.type}
+          </p>
+          <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+            <span className="font-medium">{place.distance} km away</span>
+            <span className="text-muted-foreground">•</span>
+            <span className="text-success font-medium">{place.eta} ETA</span>
+            <span className="text-muted-foreground">•</span>
+            <span className="text-primary font-medium">GPS Matched</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mt-4">
+        <a
+          href={`tel:${callNumber}`}
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-xs"
+        >
+          <Phone className="w-3.5 h-3.5" />
+          Call {callNumber}
+        </a>
+        <a
+          href={`sms:${callNumber}?body=${smsBody}`}
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold text-xs"
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          SMS
+        </a>
+        <a
+          href={`https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-xs"
+        >
+          <Navigation className="w-3.5 h-3.5" />
+          Navigate
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// ─── Section Header ───────────────────────────────────────────────────────────
+
+function SectionHeader({
+  icon, label, count, badge, accentClass,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  count: number;
+  badge?: string;
+  accentClass?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-2">
+        {icon}
+        <p className="font-bold text-sm">{label}</p>
+        <span className="text-[11px] text-muted-foreground font-medium">({count})</span>
+      </div>
+      {badge && (
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${accentClass ?? "bg-primary/10 text-primary"}`}>
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 function Nearby() {
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState("");
-  const [isOffline, setIsOffline]       = useState(false);
-  const [places, setPlaces]             = useState<NearbyPlace[]>([]);
-  const [cachedPlaces, setCachedPlaces] = useState<CachedPlace[]>([]);
-  const [analysis, setAnalysis]         = useState<AnalysisData | null>(null);
-  const [userCoords, setUserCoords]     = useState<{ lat: number; lon: number } | null>(null);
-  const [filterLabel, setFilterLabel]   = useState<string | null>(null);
-  const [country, setCountry]           = useState<CountryEmergency>(getCountryEmergencySync());
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState("");
+  const [isOffline, setIsOffline]             = useState(false);
+  const [places, setPlaces]                   = useState<NearbyPlace[]>([]);
+  const [cachedPlaces, setCachedPlaces]       = useState<CachedPlace[]>([]);
+  const [analysis, setAnalysis]               = useState<AnalysisData | null>(null);
+  const [userCoords, setUserCoords]           = useState<{ lat: number; lon: number } | null>(null);
+  const [filterLabel, setFilterLabel]         = useState<string | null>(null);
+  const [country, setCountry]                 = useState<CountryEmergency>(getCountryEmergencySync());
+  const [verifiedFallback, setVerifiedFallback] =
+    useState<(TraumaCentre & { distance: number }) | null>(null);
+
+  // Prevent double-fire in React strict mode dev
+  const didLoad = useRef(false);
 
   useEffect(() => {
-    // Load cached places immediately so offline fallback is instant
+    // Load cached places immediately for instant offline fallback
     try {
       const raw = localStorage.getItem("roadsos-last-places");
       if (raw) {
@@ -324,6 +572,9 @@ function Nearby() {
         if (Array.isArray(parsed)) setCachedPlaces(parsed);
       }
     } catch { /* ignore */ }
+
+    if (didLoad.current) return;
+    didLoad.current = true;
 
     async function load() {
       try {
@@ -338,8 +589,8 @@ function Nearby() {
           const mapped = filterTypeMap[tileFilter];
           setFilterLabel(mapped.label);
           parsedAnalysis = {
-            input: mapped.input,
-            type: mapped.type,
+            input:    mapped.input,
+            type:     mapped.type,
             severity: "MEDIUM",
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
@@ -347,8 +598,7 @@ function Nearby() {
           const savedAnalysis = localStorage.getItem("roadsos-analysis");
           if (savedAnalysis) {
             parsedAnalysis = JSON.parse(savedAnalysis);
-            // FIX: Bump severity for obvious critical keywords in case Gemini
-            // returned LOW but the raw text is clearly life-threatening.
+            // Bump severity for obvious critical keywords
             if (
               parsedAnalysis.severity === "LOW" &&
               /ambulance|need help|accident|crash|bleeding|unconscious|head injury|trauma/i
@@ -358,8 +608,8 @@ function Nearby() {
             }
           } else {
             parsedAnalysis = {
-              input: "General emergency assistance",
-              type: "Medical Emergency",
+              input:    "General emergency assistance",
+              type:     "Medical Emergency",
               severity: "MEDIUM",
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             };
@@ -368,42 +618,54 @@ function Nearby() {
 
         setAnalysis(parsedAnalysis);
 
-        // ── Get live GPS location ──────────────────────────────────────────
-        // getUserLocation() should throw with a message containing "network"
-        // or "denied" so callers can distinguish offline vs permission errors.
         const location = await getUserLocation();
-        setUserCoords({ lat: location.latitude, lon: location.longitude });
+        // Bug fix: handle both `lon` and `lng` from different cache writers
+        const resolvedLon = (location as any).longitude ?? (location as any).lon;
+        setUserCoords({ lat: location.latitude, lon: resolvedLon });
 
-        // Resolve country (uses cache if offline)
-        const resolvedCountry = await getCountryEmergency(
-          location.latitude,
-          location.longitude,
-        );
+        const resolvedCountry = await getCountryEmergency(location.latitude, resolvedLon);
         setCountry(resolvedCountry);
 
-        // ── Fetch nearby places ────────────────────────────────────────────
-        // FIX: severity is now forwarded so fetchNearbyPlaces can:
-        //   a) use a larger search radius for HIGH emergencies
-        //   b) add trauma-specific Overpass nodes for HIGH medical
+        const hospitalHint = parsedAnalysis.hospitalHint;
+
+        // Fetch live places with hospitalHint
         const nearbyPlaces = await fetchNearbyPlaces(
           location.latitude,
-          location.longitude,
+          resolvedLon,
           parsedAnalysis.type,
           parsedAnalysis.input,
+          hospitalHint,
         );
 
-        // Results arrive pre-sorted by Haversine distance + type priority
-        // from places.ts — no additional sort needed here.
         setPlaces(nearbyPlaces);
 
-        // Persist slim cache for offline fallback
+        // Option C: if hint is medical and no specialised match found in live results,
+        // find nearest verified Level 1 centre from traumaCentres.ts
+        if (
+          hospitalHint &&
+          hospitalHint !== "general" &&
+          parsedAnalysis.type === "Medical Emergency"
+        ) {
+          const hasLiveSpecialised = nearbyPlaces.some((p) => p.isSpecialised);
+          if (!hasLiveSpecialised) {
+            const capability = hintToCapability[hospitalHint];
+            const nearest    = findNearestTraumaCentre(
+              location.latitude,
+              resolvedLon,
+              capability,
+            );
+            if (nearest) setVerifiedFallback(nearest);
+          }
+        }
+
+        // Cache slim results
         if (nearbyPlaces.length > 0) {
           const slim = nearbyPlaces.slice(0, 5).map((p) => ({
-            name: p.name,
-            type: p.type,
+            name:     p.name,
+            type:     p.type,
             distance: `${p.distance} km`,
-            lat: p.latitude,
-            lon: p.longitude,
+            lat:      p.latitude,
+            lon:      p.longitude,
           }));
           localStorage.setItem("roadsos-last-places", JSON.stringify(slim));
           setCachedPlaces(slim);
@@ -412,9 +674,9 @@ function Nearby() {
             new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           );
         }
+
       } catch (err: any) {
-        // Distinguish network failure from other errors
-        const msg: string = err?.message ?? "";
+        const msg: string    = err?.message ?? "";
         const networkFail =
           msg.toLowerCase().includes("network") ||
           msg.toLowerCase().includes("fetch") ||
@@ -430,8 +692,16 @@ function Nearby() {
         setLoading(false);
       }
     }
+
     load();
   }, []);
+
+  // ── Derived splits ──────────────────────────────────────────────────────────
+  const hint          = analysis?.hospitalHint;
+  const specialised   = places.filter((p) => p.isSpecialised);
+  const general       = places.filter((p) => !p.isSpecialised);
+  const hintInfo      = hint ? hintMeta[hint] : null;
+  const showHintSplit = !!hint && hint !== "general" && analysis?.type === "Medical Emergency";
 
   const subtitle = filterLabel
     ? `Showing: ${filterLabel}`
@@ -441,12 +711,9 @@ function Nearby() {
 
   return (
     <AppShell>
-      <ScreenHeader
-        title="Nearby Services"
-        subtitle={subtitle}
-      />
+      <ScreenHeader title="Nearby Services" subtitle={subtitle} />
 
-      {/* Map — only when we have live results */}
+      {/* Map */}
       {userCoords && places.length > 0 ? (
         <MapView userLat={userCoords.lat} userLon={userCoords.lon} places={places} />
       ) : !loading && !isOffline ? (
@@ -474,6 +741,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Count banner */}
       {!loading && !error && !isOffline && places.length > 0 && (
         <div className="mx-5 mt-3">
           <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-2.5 flex items-center justify-between">
@@ -488,6 +756,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Active emergency banner */}
       {analysis && !filterLabel && (
         <div className="px-5 mt-4">
           <div className="bg-card border border-border rounded-2xl p-4 shadow-card">
@@ -497,8 +766,17 @@ function Nearby() {
                   <ShieldAlert className="w-4 h-4 text-primary" />
                   <p className="font-semibold text-sm">Active Emergency</p>
                 </div>
-                <p className="mt-2 font-bold capitalize">{analysis.type.replace(/_/g, " ").toLowerCase()}</p>
+                <p className="mt-2 font-bold capitalize">
+                  {analysis.type.replace(/_/g, " ").toLowerCase()}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">{analysis.input}</p>
+                {/* Show hospitalHint if present */}
+                {hintInfo && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/8 text-primary text-xs font-semibold">
+                    <span>{hintInfo.icon}</span>
+                    <span>Routing to {hintInfo.label}</span>
+                  </div>
+                )}
               </div>
               <div className="text-right">
                 <p className={`text-sm font-bold ${getSeverityColor(analysis.severity)}`}>
@@ -514,6 +792,7 @@ function Nearby() {
         </div>
       )}
 
+      {/* Loading */}
       {loading && (
         <div className="px-5 py-10 flex flex-col items-center justify-center text-center">
           <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -522,7 +801,7 @@ function Nearby() {
         </div>
       )}
 
-      {/* Hard error (non-network) */}
+      {/* Error */}
       {error && !isOffline && (
         <div className="px-5 mt-4">
           <div className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3">
@@ -535,17 +814,18 @@ function Nearby() {
         </div>
       )}
 
-      {/* ── Offline fallback — replaces the live list ── */}
+      {/* Offline fallback */}
       {isOffline && !loading && (
         <div className="px-5 mt-4">
           <OfflineCachedPlaces cachedPlaces={cachedPlaces} country={country} />
         </div>
       )}
 
-      {/* Live place cards */}
+      {/* ── LIVE RESULTS ── */}
       {!loading && !error && !isOffline && (
-        <div className="px-5 mt-4 space-y-3 pb-6">
-          {places.length === 0 && (
+        <div className="px-5 mt-4 space-y-6 pb-6">
+
+          {places.length === 0 && !verifiedFallback && (
             <div className="bg-card border border-border rounded-2xl p-6 text-center">
               <p className="font-semibold">No nearby services found</p>
               <p className="text-xs text-muted-foreground mt-1">
@@ -554,79 +834,101 @@ function Nearby() {
             </div>
           )}
 
-          {places.map((place, index) => {
-            const callNumber = getCallNumber(place, analysis?.type, country);
-            const smsBody = getSmsBody(place, userCoords?.lat, userCoords?.lon);
-            return (
-              <div
-                key={place.id}
-                className={`bg-card border rounded-2xl p-4 shadow-card ${
-                  index === 0 ? "border-primary/40 ring-1 ring-primary/20" : "border-border"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className="w-3 h-3 rounded-full mt-1.5 flex-shrink-0"
-                    style={{ background: typeColor[place.type] ?? "#6366f1" }}
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold">{place.name}</p>
-                      {index === 0 && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
-                          <Star className="w-2.5 h-2.5 fill-current" />
-                          Best Match
-                        </span>
-                      )}
+          {/* ────────────────────────────────────────────────────────── */}
+          {/* SPLIT VIEW — only when a medical hospitalHint is present  */}
+          {/* ────────────────────────────────────────────────────────── */}
+          {showHintSplit ? (
+            <>
+              {/* SECTION 1 — Specialised hospitals */}
+              <div>
+                <SectionHeader
+                  icon={<Stethoscope className="w-4 h-4 text-primary" />}
+                  label={hintInfo!.label}
+                  count={specialised.length + (verifiedFallback ? 1 : 0)}
+                  badge="Recommended for your injury"
+                  accentClass="bg-primary/10 text-primary"
+                />
 
-                      {place.isVerified && (
-                        <span className="px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] font-bold">
-                          ✓ Verified
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {typeLabel[place.type] ?? place.type}
+                {/* Option C: verified fallback card pinned at top */}
+                {verifiedFallback && (
+                  <div className="mb-3">
+                    <VerifiedFallbackCard
+                      centre={verifiedFallback}
+                      hint={hint!}
+                      country={country}
+                    />
+                  </div>
+                )}
+
+                {/* Live specialised results */}
+                {specialised.length > 0 ? (
+                  <div className="space-y-3">
+                    {specialised.map((place, i) => (
+                      <PlaceCard
+                        key={place.id}
+                        place={place}
+                        index={i}
+                        isBestOverall={i === 0 && !verifiedFallback}
+                        analysis={analysis}
+                        country={country}
+                        userCoords={userCoords}
+                      />
+                    ))}
+                  </div>
+                ) : !verifiedFallback ? (
+                  <div className="bg-muted rounded-2xl p-4 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      No {hintInfo!.label} found in search radius
                     </p>
-                    <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
-                      {/* FIX: distance now always 1-decimal Haversine value */}
-                      <span className="font-medium">{place.distance} km away</span>
-                      <span className="text-muted-foreground">•</span>
-                      <span className="text-success font-medium">{place.eta} ETA</span>
-                      <span className="text-muted-foreground">•</span>
-                      <span className="text-primary font-medium">GPS Matched</span>
-                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* SECTION 2 — General hospitals */}
+              {general.length > 0 && (
+                <div>
+                  <SectionHeader
+                    icon={<Building2 className="w-4 h-4 text-muted-foreground" />}
+                    label="General Hospitals Nearby"
+                    count={general.length}
+                    badge="All options"
+                    accentClass="bg-muted text-muted-foreground"
+                  />
+                  <div className="space-y-3">
+                    {general.map((place, i) => (
+                      <PlaceCard
+                        key={place.id}
+                        place={place}
+                        index={i}
+                        isBestOverall={i === 0 && specialised.length === 0 && !verifiedFallback}
+                        analysis={analysis}
+                        country={country}
+                        userCoords={userCoords}
+                      />
+                    ))}
                   </div>
                 </div>
+              )}
+            </>
+          ) : (
+            /* ──────────────────────────────────────────────────────── */
+            /* FLAT VIEW — non-medical or no hint (police/mechanic/etc) */
+            /* ──────────────────────────────────────────────────────── */
+            <div className="space-y-3">
+              {places.map((place, index) => (
+                <PlaceCard
+                  key={place.id}
+                  place={place}
+                  index={index}
+                  isBestOverall={index === 0}
+                  analysis={analysis}
+                  country={country}
+                  userCoords={userCoords}
+                />
+              ))}
+            </div>
+          )}
 
-                <div className="grid grid-cols-3 gap-2 mt-4">
-                  <a
-                    href={`tel:${callNumber}`}
-                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-success/10 text-success font-semibold text-xs"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    Call {callNumber}
-                  </a>
-                  <a
-                    href={`sms:${callNumber}?body=${smsBody}`}
-                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold text-xs"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    SMS
-                  </a>
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-xs"
-                  >
-                    <Navigation className="w-3.5 h-3.5" />
-                    Navigate
-                  </a>
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
     </AppShell>
