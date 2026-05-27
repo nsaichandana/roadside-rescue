@@ -12,8 +12,6 @@ import {
   Clock,
   AlertTriangle,
 } from "lucide-react";
-import { sendVisFast2SMS } from "@/routes/sos";
-import { normalisePhoneForCountry } from "@/utils/countryEmergency";
 
 import { useEffect, useState } from "react";
 
@@ -92,50 +90,49 @@ function removeSosEntry(id: string) {
 }
 
 /**
- * Attempt to re-send a single queued SOS via the /api/sos endpoint.
- * Returns true if sent successfully.
+ * Attempt to re-send a single queued SOS via WhatsApp deep links.
+ * The dead POST /api/sos endpoint has been removed — there is no backend.
+ * Instead we open a WhatsApp link for each contact in the queue entry.
+ * Returns true if at least one contact was reachable.
  */
 async function retrySosEntry(entry: SosQueueEntry): Promise<boolean> {
+  if (!navigator.onLine) return false;
+  if (!entry.contacts || entry.contacts.length === 0) return false;
+
   try {
-    const res = await sendVisFast2SMS(entry.contacts, entry.message);
-    return res.success.length > 0;
-  } catch (err) {
-    // If Fast2SMS fails, fallback to opening SMS app (works on user click)
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    if (isIOS) {
-      entry.contacts.forEach((contact, i) => {
-        setTimeout(() => {
-          const a = document.createElement("a");
-          a.href = `sms:${contact}&body=${encodeURIComponent(entry.message)}`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }, i * 1000);
-      });
-    } else {
-      const numbers = entry.contacts.join(";");
-      const a = document.createElement("a");
-      a.href = `sms:${numbers}?body=${encodeURIComponent(entry.message)}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
+    const body = encodeURIComponent(
+      `🚨 EMERGENCY SOS (retry)\n${entry.message}\n📍 ${entry.location}\n⏰ ${entry.timestamp}`
+    );
+    // Open WhatsApp for the first contact immediately, others with small delay
+    entry.contacts.forEach((phone, i) => {
+      const cleanPhone = phone.replace(/\D/g, "");
+      const waUrl = `https://wa.me/${cleanPhone}?text=${body}`;
+      setTimeout(() => {
+        if (i === 0) {
+          window.location.href = waUrl;
+        } else {
+          window.open(waUrl, "_blank");
+        }
+      }, i * 1200);
+    });
+    return true;
+  } catch {
     return false;
   }
 }
 
 // FIX: complete map covering all types that places.ts / nearby.tsx can produce
 const typeLabel: Record<string, string> = {
-  hospital:     "🏥 Hospital",
-  ambulance:    "🚑 Ambulance",
-  police:       "👮 Police Station",
-  mechanic:     "🔧 Mechanic / Towing",
+  hospital: "🏥 Hospital",
+  ambulance: "🚑 Ambulance",
+  police: "👮 Police Station",
+  mechanic: "🔧 Mechanic / Towing",
   fire_station: "🚒 Fire Station",
-  pharmacy:     "💊 Pharmacy",
-  fuel:         "⛽ Fuel Station",
-  showroom:     "🚗 Service Centre",
-  clinic:       "🏥 Clinic",
-  doctors:      "🩺 Doctor",
+  pharmacy: "💊 Pharmacy",
+  fuel: "⛽ Fuel Station",
+  showroom: "🚗 Service Centre",
+  clinic: "🏥 Clinic",
+  doctors: "🩺 Doctor",
 };
 
 // ─── SOS Queue Panel ─────────────────────────────────────────────────────────
@@ -149,36 +146,49 @@ function SosQueuePanel() {
     setQueue(loadSosQueue());
   }, []);
 
-  // Auto-retry when online
-  useEffect(() => {
-    if (!navigator.onLine || queue.length === 0) return;
-
-    async function autoRetry() {
-      const pending = queue.filter((e) => e.status === "pending");
-      if (pending.length === 0) return;
-
-      for (const entry of pending) {
-        const ok = await retrySosEntry(entry);
-        if (ok) {
-          removeSosEntry(entry.id);
-          setQueue((q) => q.filter((e) => e.id !== entry.id));
-          setRetryResult((r) => ({ ...r, [entry.id]: "ok" }));
-        } else {
-          // Increment retry count, mark failed
-          const updated = loadSosQueue().map((e) =>
-            e.id === entry.id
-              ? { ...e, retries: e.retries + 1, status: "failed" as const }
-              : e
-          );
-          saveSosQueue(updated);
-          setQueue(updated);
-          setRetryResult((r) => ({ ...r, [entry.id]: "fail" }));
-        }
+  // Shared retry runner used by both auto-retry and manual retry
+  async function runAutoRetry(entries: SosQueueEntry[]) {
+    const pending = entries.filter((e) => e.status === "pending");
+    if (pending.length === 0) return;
+    for (const entry of pending) {
+      const ok = await retrySosEntry(entry);
+      if (ok) {
+        removeSosEntry(entry.id);
+        setQueue((q) => q.filter((e) => e.id !== entry.id));
+        setRetryResult((r) => ({ ...r, [entry.id]: "ok" }));
+      } else {
+        const updated = loadSosQueue().map((e) =>
+          e.id === entry.id
+            ? { ...e, retries: e.retries + 1, status: "failed" as const }
+            : e
+        );
+        saveSosQueue(updated);
+        setQueue(updated);
+        setRetryResult((r) => ({ ...r, [entry.id]: "fail" }));
       }
     }
+  }
 
-    autoRetry();
+  // Auto-retry on mount if already online
+  useEffect(() => {
+    if (!navigator.onLine || queue.length === 0) return;
+    runAutoRetry(queue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue.length]);
+
+  // Auto-retry when network reconnects
+  useEffect(() => {
+    function handleOnline() {
+      const current = loadSosQueue();
+      if (current.length > 0) {
+        setQueue(current);
+        runAutoRetry(current);
+      }
+    }
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleManualRetry(entry: SosQueueEntry) {
     setRetrying(entry.id);
@@ -235,11 +245,10 @@ function SosQueuePanel() {
                   {entry.timestamp}
                 </div>
                 <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    entry.status === "pending"
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${entry.status === "pending"
                       ? "bg-warning/10 text-warning-foreground"
                       : "bg-destructive/10 text-destructive"
-                  }`}
+                    }`}
                 >
                   {entry.status === "pending" ? "PENDING" : `FAILED (${entry.retries} tries)`}
                 </span>
@@ -340,9 +349,9 @@ function Offline() {
   // Country-specific emergency numbers for the grid
   const emergencyNumbers = [
     { l: "All-in-one", n: country.allEmergency },
-    { l: "Police",     n: country.police },
-    { l: "Ambulance",  n: country.ambulance },
-    { l: "Fire",       n: country.fire },
+    { l: "Police", n: country.police },
+    { l: "Ambulance", n: country.ambulance },
+    { l: "Fire", n: country.fire },
     ...(country.highway
       ? [{ l: country.highwayLabel ?? "Highway", n: country.highway }]
       : []),

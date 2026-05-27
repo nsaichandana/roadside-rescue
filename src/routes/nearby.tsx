@@ -53,20 +53,19 @@ import {
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon   from "leaflet/dist/images/marker-icon.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
 // @ts-ignore
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
-  iconUrl:       markerIcon,
-  shadowUrl:     markerShadow,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
 
 export const Route = createFileRoute("/nearby")({
-  component: Nearby,
-  errorComponent: EmergencyFallback,
+  component: () => <EmergencyFallback><Nearby /></EmergencyFallback>,
 });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,51 +91,51 @@ type CachedPlace = {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const filterTypeMap: Record<string, { type: EmergencyType; label: string; input: string }> = {
-  police:   { type: "Security Emergency",  label: "Police Help",        input: "Need police assistance" },
-  mechanic: { type: "Vehicle Breakdown",   label: "Vehicle Breakdown",  input: "Vehicle breakdown, need mechanic or towing" },
-  fire:     { type: "Fire Emergency",      label: "Fire Emergency",     input: "Fire emergency, need fire station" },
-  pharmacy: { type: "Medical Emergency",   label: "Pharmacy",           input: "Need pharmacy or medical store nearby" },
-  fuel:     { type: "Vehicle Breakdown",   label: "Fuel Station",       input: "Need petrol or fuel station nearby" },
-  showroom: { type: "Vehicle Breakdown",   label: "Car Service Centre", input: "Need car showroom or service centre nearby" },
+  police: { type: "Security Emergency", label: "Police Help", input: "Need police assistance" },
+  mechanic: { type: "Vehicle Breakdown", label: "Vehicle Breakdown", input: "Vehicle breakdown, need mechanic or towing" },
+  fire: { type: "Fire Emergency", label: "Fire Emergency", input: "Fire emergency, need fire station" },
+  pharmacy: { type: "Medical Emergency", label: "Pharmacy", input: "Need pharmacy or medical store nearby" },
+  fuel: { type: "Vehicle Breakdown", label: "Fuel Station", input: "Need petrol or fuel station nearby" },
+  showroom: { type: "Vehicle Breakdown", label: "Car Service Centre", input: "Need car showroom or service centre nearby" },
 };
 
 /** Maps HospitalHint → traumaCentres.ts capability string */
 const hintToCapability: Record<HospitalHint, string | undefined> = {
-  neuro:   "neurology",
+  neuro: "neurology",
   cardiac: "icu",          // best proxy in traumaCentres capabilities
-  burns:   "burn_unit",
-  trauma:  "emergency_surgery",
+  burns: "burn_unit",
+  trauma: "emergency_surgery",
   general: undefined,
 };
 
 const hintMeta: Record<HospitalHint, { label: string; icon: string; description: string }> = {
-  neuro:   { label: "Neuro / Trauma Centre",  icon: "🧠", description: "Specialised for head, brain & spinal injuries" },
-  cardiac: { label: "Cardiac Hospital",        icon: "🫀", description: "Specialised for heart & chest emergencies" },
-  burns:   { label: "Burns Unit",              icon: "🔥", description: "Specialised burns & reconstructive care" },
-  trauma:  { label: "Trauma Centre",           icon: "🩹", description: "Level 1 trauma & emergency surgery" },
-  general: { label: "General Hospital",        icon: "🏥", description: "General emergency care" },
+  neuro: { label: "Neuro / Trauma Centre", icon: "🧠", description: "Specialised for head, brain & spinal injuries" },
+  cardiac: { label: "Cardiac Hospital", icon: "🫀", description: "Specialised for heart & chest emergencies" },
+  burns: { label: "Burns Unit", icon: "🔥", description: "Specialised burns & reconstructive care" },
+  trauma: { label: "Trauma Centre", icon: "🩹", description: "Level 1 trauma & emergency surgery" },
+  general: { label: "General Hospital", icon: "🏥", description: "General emergency care" },
 };
 
 const typeColor: Record<string, string> = {
-  hospital:     "#ef4444",
-  ambulance:    "#f97316",
-  police:       "#3b82f6",
-  mechanic:     "#eab308",
+  hospital: "#ef4444",
+  ambulance: "#f97316",
+  police: "#3b82f6",
+  mechanic: "#eab308",
   fire_station: "#f43f5e",
-  pharmacy:     "#10b981",
-  fuel:         "#f59e0b",
-  showroom:     "#6366f1",
+  pharmacy: "#10b981",
+  fuel: "#f59e0b",
+  showroom: "#6366f1",
 };
 
 const typeLabel: Record<string, string> = {
-  hospital:     "Hospital",
-  ambulance:    "Ambulance",
-  police:       "Police Station",
-  mechanic:     "Mechanic / Towing",
+  hospital: "Hospital",
+  ambulance: "Ambulance",
+  police: "Police Station",
+  mechanic: "Mechanic / Towing",
   fire_station: "Fire Station",
-  pharmacy:     "Pharmacy",
-  fuel:         "Fuel Station",
-  showroom:     "Service Centre",
+  pharmacy: "Pharmacy",
+  fuel: "Fuel Station",
+  showroom: "Service Centre",
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -149,10 +148,10 @@ function getCallNumber(
   if (place.phone) return place.phone;
   switch (emergencyType) {
     case "Security Emergency": return country.police;
-    case "Medical Emergency":  return country.ambulance;
-    case "Fire Emergency":     return country.fire;
-    case "Vehicle Breakdown":  return country.highway ?? country.allEmergency;
-    default:                   return country.allEmergency;
+    case "Medical Emergency": return country.ambulance;
+    case "Fire Emergency": return country.fire;
+    case "Vehicle Breakdown": return country.highway ?? country.allEmergency;
+    default: return country.allEmergency;
   }
 }
 
@@ -167,9 +166,9 @@ function getSmsBody(place: NearbyPlace, userLat?: number, userLon?: number): str
 
 function getSeverityColor(severity: Severity) {
   switch (severity) {
-    case "HIGH":   return "text-destructive";
+    case "HIGH": return "text-destructive";
     case "MEDIUM": return "text-warning";
-    default:       return "text-success";
+    default: return "text-success";
   }
 }
 
@@ -182,8 +181,8 @@ function makeIcon(color: string) {
       transform:rotate(-45deg);
       box-shadow:0 2px 8px rgba(0,0,0,0.35)">
     </div>`,
-    iconSize:    [28, 28],
-    iconAnchor:  [14, 28],
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
     popupAnchor: [0, -30],
   });
 }
@@ -197,16 +196,16 @@ function MapView({
   userLon: number;
   places: NearbyPlace[];
 }) {
-  const mapRef      = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
 
     const map = L.map(mapRef.current, {
-      center:            [userLat, userLon],
-      zoom:              14,
-      zoomControl:       true,
+      center: [userLat, userLon],
+      zoom: 14,
+      zoomControl: true,
       attributionControl: false,
     });
     mapInstance.current = map;
@@ -222,7 +221,7 @@ function MapView({
         background:#3b82f6;border:3px solid white;
         box-shadow:0 0 0 6px rgba(59,130,246,0.25)">
       </div>`,
-      iconSize:   [16, 16],
+      iconSize: [16, 16],
       iconAnchor: [8, 8],
     });
     L.marker([userLat, userLon], { icon: userIcon })
@@ -450,15 +449,14 @@ function PlaceCard({
   userCoords: { lat: number; lon: number } | null;
 }) {
   const callNumber = getCallNumber(place, analysis?.type, country);
-  const smsBody    = getSmsBody(place, userCoords?.lat, userCoords?.lon);
+  const smsBody = getSmsBody(place, userCoords?.lat, userCoords?.lon);
 
   return (
     <div
-      className={`bg-card border rounded-2xl p-4 shadow-card ${
-        isBestOverall
+      className={`bg-card border rounded-2xl p-4 shadow-card ${isBestOverall
           ? "border-primary/40 ring-1 ring-primary/20"
           : "border-border"
-      }`}
+        }`}
     >
       <div className="flex items-start gap-3">
         <div
@@ -552,15 +550,15 @@ function SectionHeader({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function Nearby() {
-  const [loading, setLoading]                 = useState(true);
-  const [error, setError]                     = useState("");
-  const [isOffline, setIsOffline]             = useState(false);
-  const [places, setPlaces]                   = useState<NearbyPlace[]>([]);
-  const [cachedPlaces, setCachedPlaces]       = useState<CachedPlace[]>([]);
-  const [analysis, setAnalysis]               = useState<AnalysisData | null>(null);
-  const [userCoords, setUserCoords]           = useState<{ lat: number; lon: number } | null>(null);
-  const [filterLabel, setFilterLabel]         = useState<string | null>(null);
-  const [country, setCountry]                 = useState<CountryEmergency>(getCountryEmergencySync());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [isOffline, setIsOffline] = useState(false);
+  const [places, setPlaces] = useState<NearbyPlace[]>([]);
+  const [cachedPlaces, setCachedPlaces] = useState<CachedPlace[]>([]);
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [filterLabel, setFilterLabel] = useState<string | null>(null);
+  const [country, setCountry] = useState<CountryEmergency>(getCountryEmergencySync());
   const [verifiedFallback, setVerifiedFallback] =
     useState<(TraumaCentre & { distance: number }) | null>(null);
 
@@ -593,8 +591,8 @@ function Nearby() {
           const mapped = filterTypeMap[tileFilter];
           setFilterLabel(mapped.label);
           parsedAnalysis = {
-            input:    mapped.input,
-            type:     mapped.type,
+            input: mapped.input,
+            type: mapped.type,
             severity: "MEDIUM",
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
@@ -612,8 +610,8 @@ function Nearby() {
             }
           } else {
             parsedAnalysis = {
-              input:    "General emergency assistance",
-              type:     "Medical Emergency",
+              input: "General emergency assistance",
+              type: "Medical Emergency",
               severity: "MEDIUM",
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             };
@@ -653,7 +651,7 @@ function Nearby() {
           const hasLiveSpecialised = nearbyPlaces.some((p) => p.isSpecialised);
           if (!hasLiveSpecialised) {
             const capability = hintToCapability[hospitalHint];
-            const nearest    = findNearestTraumaCentre(
+            const nearest = findNearestTraumaCentre(
               location.latitude,
               resolvedLon,
               capability,
@@ -665,11 +663,11 @@ function Nearby() {
         // Cache slim results
         if (nearbyPlaces.length > 0) {
           const slim = nearbyPlaces.slice(0, 5).map((p) => ({
-            name:     p.name,
-            type:     p.type,
+            name: p.name,
+            type: p.type,
             distance: `${p.distance} km`,
-            lat:      p.latitude,
-            lon:      p.longitude,
+            lat: p.latitude,
+            lon: p.longitude,
           }));
           localStorage.setItem("roadsos-last-places", JSON.stringify(slim));
           setCachedPlaces(slim);
@@ -680,7 +678,7 @@ function Nearby() {
         }
 
       } catch (err: any) {
-        const msg: string    = err?.message ?? "";
+        const msg: string = err?.message ?? "";
         const networkFail =
           msg.toLowerCase().includes("network") ||
           msg.toLowerCase().includes("fetch") ||
@@ -701,17 +699,17 @@ function Nearby() {
   }, []);
 
   // ── Derived splits ──────────────────────────────────────────────────────────
-  const hint          = analysis?.hospitalHint;
-  const specialised   = places.filter((p) => p.isSpecialised);
-  const general       = places.filter((p) => !p.isSpecialised);
-  const hintInfo      = hint ? hintMeta[hint] : null;
+  const hint = analysis?.hospitalHint;
+  const specialised = places.filter((p) => p.isSpecialised);
+  const general = places.filter((p) => !p.isSpecialised);
+  const hintInfo = hint ? hintMeta[hint] : null;
   const showHintSplit = !!hint && hint !== "general" && analysis?.type === "Medical Emergency";
 
   const subtitle = filterLabel
     ? `Showing: ${filterLabel}`
     : analysis
-    ? `Live routing · ${analysis.type.replace(/_/g, " ").toLowerCase()}`
-    : "Live emergency assistance";
+      ? `Live routing · ${analysis.type.replace(/_/g, " ").toLowerCase()}`
+      : "Live emergency assistance";
 
   return (
     <AppShell>

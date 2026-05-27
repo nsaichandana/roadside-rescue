@@ -1,5 +1,6 @@
 import { analyzeEmergency } from "@/ai/gemini";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { EmergencyFallback } from "@/components/EmergencyFallback";
 import {
   ArrowLeft, AlertTriangle, Stethoscope, Ambulance,
   Shield, Flame, Wrench, MapPin, Clock3,
@@ -18,7 +19,7 @@ import {
 } from "@/utils/countryEmergency";
 
 export const Route = createFileRoute("/analysis")({
-  component: Analysis,
+  component: () => <EmergencyFallback><Analysis /></EmergencyFallback>,
 });
 
 type EmergencyType =
@@ -365,11 +366,10 @@ function Analysis() {
           <button
             onClick={handleViewNearby}
             disabled={!aiDone}
-            className={`inline-flex items-center justify-center gap-2 rounded-2xl py-4 font-bold text-sm transition ${
-              aiDone
-                ? "bg-gradient-emergency text-emergency-foreground shadow-emergency"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
-            }`}
+            className={`inline-flex items-center justify-center gap-2 rounded-2xl py-4 font-bold text-sm transition ${aiDone
+              ? "bg-gradient-emergency text-emergency-foreground shadow-emergency"
+              : "bg-muted text-muted-foreground cursor-not-allowed"
+              }`}
           >
             <MapPin className="w-4 h-4" />
             {loadingAI ? "Analyzing..." : "View Nearby"}

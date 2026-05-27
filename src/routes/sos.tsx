@@ -11,8 +11,7 @@ import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/countryEmergency";
 
 export const Route = createFileRoute("/sos")({
-  component: SOS,
-  errorComponent: EmergencyFallback,
+  component: () => <EmergencyFallback><SOS /></EmergencyFallback>,
 });
 
 // ── Fast2SMS silent send ──────────────────────────────────────────────────────
@@ -22,7 +21,7 @@ type SendStatus = {
   status: "sending" | "sent" | "failed";
 };
 
-export async function sendVisFast2SMS(
+async function sendVisFast2SMS(
   phones: string[],
   message: string
 ): Promise<{ success: string[]; failed: string[] }> {
@@ -154,19 +153,19 @@ function buildMessage(
 }
 
 function SOS() {
-  const [sent, setSent]                       = useState(false);
-  const [retryQueued, setRetryQueued]         = useState(false);
-  const [sendStatuses, setSendStatuses]       = useState<SendStatus[]>([]);
-  const [apiSending, setApiSending]           = useState(false);
-  const [holding, setHolding]                 = useState(false);
-  const [time, setTime]                       = useState("");
+  const [sent, setSent] = useState(false);
+  const [retryQueued, setRetryQueued] = useState(false);
+  const [sendStatuses, setSendStatuses] = useState<SendStatus[]>([]);
+  const [apiSending, setApiSending] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const [time, setTime] = useState("");
   const [loadingLocation, setLoadingLocation] = useState(true);
-  const [locationError, setLocationError]     = useState("");
-  const [location, setLocation]               = useState<LocationData | null>(null);
+  const [locationError, setLocationError] = useState("");
+  const [location, setLocation] = useState<LocationData | null>(null);
   // FIX: new state for human-readable address
-  const [address, setAddress]                 = useState<string>("");
-  const [user, setUser]                       = useState<UserData | null>(null);
-  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
+  const [address, setAddress] = useState<string>("");
+  const [user, setUser] = useState<UserData | null>(null);
+  const [allContacts, setAllContacts] = useState<SavedContact[]>([]);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
@@ -289,7 +288,14 @@ function SOS() {
     setTime(currentTime);
     setSent(true);
 
-    // Removed early queueing, moved to the bottom where msgText and contacts are ready.
+    if (!navigator.onLine) {
+      localStorage.setItem("roadsos-sos-queue", JSON.stringify({
+        ts: currentTime,
+        userId: user.fullName,
+        queued: true,
+      }));
+      setRetryQueued(true);
+    }
 
     const cachedPlaces = localStorage.getItem("roadsos-last-places");
     let nearestHospital = "Nearest emergency service";
@@ -308,9 +314,9 @@ function SOS() {
 
     const emergencyPhones: { name: string; phone: string }[] = [];
     const ec1Phone = user.emergencyContact1Phone || user.emergency1 || "";
-    const ec1Name  = user.emergencyContact1Name  || user.emergency1Name || "Emergency Contact 1";
+    const ec1Name = user.emergencyContact1Name || user.emergency1Name || "Emergency Contact 1";
     const ec2Phone = user.emergencyContact2Phone || user.emergency2 || "";
-    const ec2Name  = user.emergencyContact2Name  || user.emergency2Name || "Emergency Contact 2";
+    const ec2Name = user.emergencyContact2Name || user.emergency2Name || "Emergency Contact 2";
 
     if (ec1Phone) emergencyPhones.push({ name: ec1Name, phone: ec1Phone });
     if (ec2Phone) emergencyPhones.push({ name: ec2Name, phone: ec2Phone });
@@ -369,24 +375,6 @@ function SOS() {
         });
     }
 
-    if (!navigator.onLine) {
-      try {
-        const queueRaw = localStorage.getItem("roadsos-sos-queue");
-        const queueArr = Array.isArray(queueRaw ? JSON.parse(queueRaw) : []) ? (queueRaw ? JSON.parse(queueRaw) : []) : [];
-        queueArr.push({
-          id: Math.random().toString(36).substring(7),
-          timestamp: currentTime,
-          message: msgText,
-          location: address || "Unknown Location",
-          contacts: allPhones.map((c) => c.phone),
-          retries: 0,
-          status: "pending"
-        });
-        localStorage.setItem("roadsos-sos-queue", JSON.stringify(queueArr));
-        setRetryQueued(true);
-      } catch { /* ignore */ }
-    }
-
     emergencyPhones.forEach((contact, i) => {
       const waNumber = normalisePhone(contact.phone);
       const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(msgText)}`;
@@ -399,9 +387,9 @@ function SOS() {
   }
 
   const ec1Phone = user?.emergencyContact1Phone || user?.emergency1 || "";
-  const ec1Name  = user?.emergencyContact1Name  || user?.emergency1Name || "Emergency Contact 1";
+  const ec1Name = user?.emergencyContact1Name || user?.emergency1Name || "Emergency Contact 1";
   const ec2Phone = user?.emergencyContact2Phone || user?.emergency2 || "";
-  const ec2Name  = user?.emergencyContact2Name  || user?.emergency2Name || "Emergency Contact 2";
+  const ec2Name = user?.emergencyContact2Name || user?.emergency2Name || "Emergency Contact 2";
 
   const displayContacts = [
     ...(ec1Phone ? [{ name: ec1Name, phone: ec1Phone, tag: "Primary", whatsapp: true }] : []),
@@ -461,9 +449,8 @@ function SOS() {
             onTouchStart={() => setHolding(true)}
             onTouchEnd={(e) => { e.preventDefault(); setHolding(false); sendSOS(); }}
             disabled={!user}
-            className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${
-              holding ? "scale-95" : "animate-pulse-ring"
-            } disabled:opacity-50`}
+            className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${holding ? "scale-95" : "animate-pulse-ring"
+              } disabled:opacity-50`}
           >
             <div className="flex flex-col items-center gap-2">
               <Siren className="w-10 h-10" />
@@ -656,7 +643,7 @@ function SOS() {
             return [
               { label: "Emergency", num: c.allEmergency },
               { label: "Ambulance", num: c.ambulance },
-              { label: "Police",    num: c.police },
+              { label: "Police", num: c.police },
               { label: c.highwayLabel ?? "Highway", num: c.highway ?? c.police },
             ];
           })().map((e) => (

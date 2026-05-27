@@ -70,6 +70,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        navigateFallback: '/index.html',
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/overpass-api\.de\/.*/i,
@@ -102,7 +103,9 @@ export default defineConfig({
       },
       devOptions: {
         enabled: true,
-        type: 'module'
+        type: 'module',
+        navigateFallback: 'index.html',
+        navigateFallbackAllowlist: [/^.*$/]
       }
     })
   ],

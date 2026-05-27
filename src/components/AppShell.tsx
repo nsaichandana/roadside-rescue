@@ -1,13 +1,13 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { Home, Zap, Map, Shield, Users, Siren, WifiOff, Navigation2 } from "lucide-react";
-import { ReactNode, useState, useEffect } from "react";
+import { Home, Zap, Map, Shield, Users, Siren } from "lucide-react";
+import { ReactNode, useEffect, useState } from "react";
 
 const navItems = [
-  { to: "/home",      label: "Home",      icon: Home   },
-  { to: "/emergency", label: "Emergency", icon: Zap    },
-  { to: "/sos",       label: "SOS",       icon: Shield, emergency: true },
-  { to: "/trip",      label: "Trip",      icon: Map    },
-  { to: "/contacts",  label: "Contacts",  icon: Users  },
+  { to: "/home", label: "Home", icon: Home },
+  { to: "/emergency", label: "Emergency", icon: Zap },
+  { to: "/sos", label: "SOS", icon: Shield, emergency: true },
+  { to: "/trip", label: "Trip", icon: Map },
+  { to: "/contacts", label: "Contacts", icon: Users },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -38,13 +38,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <li key={to} className="flex justify-center">
                   <Link
                     to={to}
-                    className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-xl text-xs font-medium transition-all w-full ${
-                      emergency
+                    className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-xl text-xs font-medium transition-all w-full ${emergency
                         ? "text-emergency-foreground"
                         : active
-                        ? "text-primary"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+                          ? "text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
                   >
                     {emergency ? (
                       <span className="w-12 h-12 -mt-6 rounded-full bg-gradient-emergency shadow-emergency flex items-center justify-center animate-pulse-ring">
@@ -86,11 +85,13 @@ export function ScreenHeader({
 }
 
 export function StatusBar() {
+  // Task 4: Replace hardcoded "Online" with live navigator.onLine detection
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    function handleOnline() { setIsOnline(true); }
+    function handleOffline() { setIsOnline(false); }
+
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     return () => {
@@ -104,15 +105,14 @@ export function StatusBar() {
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> GPS
       </span>
-      {isOnline ? (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
-          <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> Online
-        </span>
-      ) : (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive/10 text-destructive font-medium">
-          <WifiOff className="w-3 h-3" /> Offline Mode
-        </span>
-      )}
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${isOnline
+          ? "bg-success/10 text-success"
+          : "bg-warning/10 text-warning-foreground"
+        }`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-success animate-pulse" : "bg-warning-foreground"
+          }`} />
+        {isOnline ? "Online" : "Offline"}
+      </span>
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium ml-auto">
         Battery 87%
       </span>
