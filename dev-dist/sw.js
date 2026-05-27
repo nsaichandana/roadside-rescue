@@ -80,12 +80,12 @@ define(['./workbox-d488705a'], (function (workbox) { 'use strict';
     "url": "registerSW.js",
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
-    "url": "/index.html",
-    "revision": "0.hmt9vvpoqv8"
+    "url": "index.html",
+    "revision": "0.idu5vgri2i"
   }], {});
   workbox.cleanupOutdatedCaches();
-  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/index.html"), {
-    allowlist: [/^.*$/]
+  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
+    allowlist: [/^\/$/]
   }));
   workbox.registerRoute(/^https:\/\/overpass-api\.de\/.*/i, new workbox.NetworkFirst({
     "cacheName": "overpass-cache",

@@ -81,8 +81,8 @@ export function FallbackUI({ error }: { error?: Error }) {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Banner */}
       <div className={`px-5 pt-6 pb-4 flex items-start gap-3 ${isOffline
-          ? "bg-warning/15 border-b border-warning/30"
-          : "bg-destructive/10 border-b border-destructive/20"
+        ? "bg-warning/15 border-b border-warning/30"
+        : "bg-destructive/10 border-b border-destructive/20"
         }`}>
         {isOffline
           ? <WifiOff className="w-5 h-5 text-warning-foreground mt-0.5 flex-shrink-0" />

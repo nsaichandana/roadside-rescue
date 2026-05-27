@@ -2,7 +2,7 @@ import {
   createFileRoute,
   useNavigate,
 } from "@tanstack/react-router";
-import { EmergencyFallback } from "@/components/EmergencyFallback";
+import { TanStackErrorFallback } from "@/components/EmergencyFallback";
 
 import {
   Mic,
@@ -22,7 +22,7 @@ import {
 
 export const Route = createFileRoute("/emergency")({
   component: Emergency,
-  errorComponent: EmergencyFallback,
+  errorComponent: TanStackErrorFallback,
 });
 
 // ─── Chips ────────────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ function Emergency() {
         localStorage.setItem("roadsos-nearby-filter", chip.nearbyFilter);
       }
       navigate({ to: "/analysis" });
-    }, 180); // brief flash so user sees selection feedback
+    }, 180);
   }
 
   /** Free-text analyze (existing flow) */
@@ -174,7 +174,7 @@ function Emergency() {
         </div>
       </header>
 
-      {/* ── INSTANT CHIPS — one tap dispatches immediately ── */}
+      {/* ── INSTANT CHIPS ── */}
       <section className="px-5 mb-5">
         <div className="flex items-center gap-2 mb-3">
           <Zap className="w-4 h-4 text-primary" />
@@ -238,8 +238,7 @@ function Emergency() {
             {voiceSupported ? (
               <button
                 onClick={isListening ? stopVoiceInput : startVoiceInput}
-                className={`inline-flex items-center gap-2 text-sm font-semibold transition ${isListening ? "text-destructive" : "text-primary"
-                  }`}
+                className={`inline-flex items-center gap-2 text-sm font-semibold transition ${isListening ? "text-destructive" : "text-primary"}`}
               >
                 <span className={`w-9 h-9 rounded-full flex items-center justify-center ${isListening ? "bg-destructive/10 animate-pulse" : "bg-primary/10"}`}>
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -289,7 +288,7 @@ function Emergency() {
         </div>
       </section>
 
-      {/* Bottom CTA — only shown when free text has content */}
+      {/* Bottom CTA */}
       <div className="fixed bottom-0 left-0 right-0 px-5 pb-6 pt-3 bg-gradient-to-t from-background via-background to-transparent">
         <div className="max-w-2xl mx-auto">
           <button
