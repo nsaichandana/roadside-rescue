@@ -1,38 +1,39 @@
 /**
  * EmergencyFallback.tsx
  *
- * Error boundary wrapper for critical emergency routes:
- *   /sos, /nearby, /analysis
+ * Provides TWO exports:
  *
- * When a route crashes (JS error, chunk load failure, etc.)
- * this component renders instead of a blank screen.
+ *  1. EmergencyFallback (class) — React Error Boundary.
+ *     Wrap critical route components: <EmergencyFallback><SOS /></EmergencyFallback>
+ *     Catches JS runtime errors and shows FallbackUI instead of blank screen.
  *
- * Shows:
- *   - Country-aware emergency call buttons (from cached countryEmergency)
- *   - Cached nearby places from roadsos-last-places
- *   - Offline warning if navigator.onLine is false
- *   - Direct call buttons (always functional — no network needed)
+ *  2. TanStackErrorFallback (function) — TanStack Router errorComponent.
+ *     Used in createFileRoute({ errorComponent: TanStackErrorFallback }).
+ *     Fixes clash: TanStack Router cannot accept a class component as errorComponent.
  *
- * Rules:
- *   - Zero API calls — reads only from localStorage + countryEmergency cache
- *   - Uses place.lon ?? place.lng to handle schema drift
- *   - Does NOT redesign any existing UI
+ * Shows (offline-capable, zero API calls):
+ *   - Country-aware emergency call buttons (from countryEmergency cache)
+ *   - Cached nearby places from roadsos-last-places (with lon ?? lng guard)
+ *   - Offline warning banner
  */
 
 import { Component, type ReactNode } from "react";
 import { Phone, MapPin, WifiOff, Navigation, AlertTriangle } from "lucide-react";
 import { getCountryEmergencySync } from "@/utils/countryEmergency";
 
-// ── Cached place shape (matches what places.ts writes) ────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type CachedPlace = {
   name: string;
   type?: string;
   distance?: string;
   lat?: number;
-  lon?: number;   // places.ts writes `lon`
-  lng?: number;   // trip.tsx may write `lng` — schema drift guard
+  lon?: number;  // places.ts writes `lon`
+  lng?: number;  // schema drift guard — trip.tsx may write `lng`
   phone?: string;
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function loadCachedPlaces(): CachedPlace[] {
   try {
@@ -58,8 +59,9 @@ const typeLabel: Record<string, string> = {
   doctors: "🩺 Doctor",
 };
 
-// ── Fallback UI — purely functional, no API calls ─────────────────────────────
-function FallbackUI({ error }: { error?: Error }) {
+// ── Shared fallback UI (used by both exports) ─────────────────────────────────
+
+export function FallbackUI({ error }: { error?: Error }) {
   const country = getCountryEmergencySync();
   const places = loadCachedPlaces();
   const isOffline = !navigator.onLine;
@@ -77,7 +79,7 @@ function FallbackUI({ error }: { error?: Error }) {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {/* Offline / error banner */}
+      {/* Banner */}
       <div className={`px-5 pt-6 pb-4 flex items-start gap-3 ${isOffline
           ? "bg-warning/15 border-b border-warning/30"
           : "bg-destructive/10 border-b border-destructive/20"
@@ -92,7 +94,7 @@ function FallbackUI({ error }: { error?: Error }) {
           </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {isOffline
-              ? "Showing cached emergency data. Call services directly using the numbers below."
+              ? "Showing cached emergency data. Call services directly."
               : "The screen failed to load. Use the emergency contacts below."}
           </p>
           {error && (
@@ -105,7 +107,7 @@ function FallbackUI({ error }: { error?: Error }) {
 
       <div className="flex-1 px-5 py-4 space-y-5">
 
-        {/* Emergency call buttons — always rendered, always work */}
+        {/* Emergency numbers */}
         <div>
           <p className="text-xs uppercase tracking-wider font-bold text-primary mb-3">
             Emergency Numbers · {country.countryName}
@@ -129,17 +131,14 @@ function FallbackUI({ error }: { error?: Error }) {
           </div>
         </div>
 
-        {/* Cached nearby places — uses lon ?? lng schema drift guard */}
+        {/* Cached nearby places */}
         <div>
           <p className="text-xs uppercase tracking-wider font-bold text-primary mb-1">
             Cached Nearby Services
           </p>
           {lastSync && (
-            <p className="text-[10px] text-muted-foreground mb-3">
-              Last synced: {lastSync}
-            </p>
+            <p className="text-[10px] text-muted-foreground mb-3">Last synced: {lastSync}</p>
           )}
-
           {places.length === 0 ? (
             <div className="bg-card border border-border rounded-2xl p-5 text-center">
               <MapPin className="w-5 h-5 text-muted-foreground mx-auto mb-2" />
@@ -151,11 +150,9 @@ function FallbackUI({ error }: { error?: Error }) {
           ) : (
             <div className="space-y-2">
               {places.map((place, i) => {
-                // Schema drift guard: accept both lon and lng
                 const lat = place.lat;
-                const lon = place.lon ?? place.lng;
+                const lon = place.lon ?? place.lng; // schema drift guard
                 const hasCoords = lat != null && lon != null;
-
                 return (
                   <div
                     key={i}
@@ -203,29 +200,39 @@ function FallbackUI({ error }: { error?: Error }) {
   );
 }
 
-// ── Error Boundary class component ────────────────────────────────────────────
-type Props = { children: ReactNode };
-type State = { hasError: boolean; error?: Error };
+// ── Export 1: React Error Boundary (class) ────────────────────────────────────
+// Usage: <EmergencyFallback><SOS /></EmergencyFallback>
 
-export class EmergencyFallback extends Component<Props, State> {
-  constructor(props: Props) {
+type BoundaryProps = { children: ReactNode };
+type BoundaryState = { hasError: boolean; error?: Error };
+
+export class EmergencyFallback extends Component<BoundaryProps, BoundaryState> {
+  constructor(props: BoundaryProps) {
     super(props);
     this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): BoundaryState {
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
-    // Log for debugging — non-blocking
     console.error("[EmergencyFallback] Route error caught:", error, info);
   }
 
   render() {
     if (this.state.hasError) {
+      // Use the module-level FallbackUI — no scope issue
       return <FallbackUI error={this.state.error} />;
     }
     return this.props.children;
   }
+}
+
+// ── Export 2: TanStack Router errorComponent (function) ───────────────────────
+// Usage in createFileRoute: { errorComponent: TanStackErrorFallback }
+// Fixes: "Type 'typeof EmergencyFallback' is not assignable to ErrorRouteComponent"
+
+export function TanStackErrorFallback({ error }: { error: Error }) {
+  return <FallbackUI error={error} />;
 }

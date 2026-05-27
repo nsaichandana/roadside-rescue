@@ -70,7 +70,6 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallback: '/index.html',
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/overpass-api\.de\/.*/i,
@@ -102,14 +101,16 @@ export default defineConfig({
         ]
       },
       devOptions: {
+        // NOTE: SW is enabled in dev for registration testing only.
+        // Full offline functionality (blank-screen-free) requires:
+        //   npm run build && npm run preview
+        // In dev mode, unbundled .tsx files won't be cached — that is expected.
         enabled: true,
-        type: 'module',
-        navigateFallback: 'index.html',
-        navigateFallbackAllowlist: [/^.*$/]
+        type: 'module'
       }
     })
   ],
   build: {
     outDir: 'dist',
   },
-})  
+})

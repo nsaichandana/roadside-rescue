@@ -39,18 +39,18 @@ type ChipData = {
 };
 
 const INSTANT_CHIPS: ChipData[] = [
-  { label: "Accident",       emoji: "🚗", input: "Road accident, ambulance needed",                   type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Heart Attack",   emoji: "🫀", input: "Heart attack, cardiac emergency, need ambulance",   type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Bleeding",       emoji: "🩸", input: "Severe bleeding, wound, emergency medical help",    type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Unconscious",    emoji: "😵", input: "Person unconscious, not responding, ambulance now", type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Head Injury",    emoji: "🤕", input: "Head injury, possible concussion, do not move",     type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Two Wheeler",    emoji: "🏍️", input: "Bike or two-wheeler accident, head or spinal injury possible", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
-  { label: "Flat Tire",      emoji: "🔧", input: "Flat tyre or puncture on road, need mechanic",      type: "Vehicle Breakdown",  severity: "MEDIUM", nearbyFilter: "mechanic" },
-  { label: "Breakdown",      emoji: "🚙", input: "Vehicle breakdown, engine failed, need towing",     type: "Vehicle Breakdown",  severity: "MEDIUM", nearbyFilter: "mechanic" },
-  { label: "Smoke / Fire",   emoji: "🔥", input: "Fire or smoke, fire emergency",                     type: "Fire Emergency",     severity: "HIGH",   nearbyFilter: "fire" },
-  { label: "Robbery",        emoji: "🚨", input: "Robbery or theft in progress, need police",         type: "Security Emergency", severity: "HIGH",   nearbyFilter: "police" },
-  { label: "Need Ambulance", emoji: "🚑", input: "Medical emergency, ambulance required immediately", type: "Medical Emergency",  severity: "HIGH",   nearbyFilter: "" },
-  { label: "Locked Out",     emoji: "🔐", input: "Locked out of vehicle, need roadside assistance",   type: "Vehicle Breakdown",  severity: "LOW",    nearbyFilter: "mechanic" },
+  { label: "Accident", emoji: "🚗", input: "Road accident, ambulance needed", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Heart Attack", emoji: "🫀", input: "Heart attack, cardiac emergency, need ambulance", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Bleeding", emoji: "🩸", input: "Severe bleeding, wound, emergency medical help", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Unconscious", emoji: "😵", input: "Person unconscious, not responding, ambulance now", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Head Injury", emoji: "🤕", input: "Head injury, possible concussion, do not move", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Two Wheeler", emoji: "🏍️", input: "Bike or two-wheeler accident, head or spinal injury possible", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Flat Tire", emoji: "🔧", input: "Flat tyre or puncture on road, need mechanic", type: "Vehicle Breakdown", severity: "MEDIUM", nearbyFilter: "mechanic" },
+  { label: "Breakdown", emoji: "🚙", input: "Vehicle breakdown, engine failed, need towing", type: "Vehicle Breakdown", severity: "MEDIUM", nearbyFilter: "mechanic" },
+  { label: "Smoke / Fire", emoji: "🔥", input: "Fire or smoke, fire emergency", type: "Fire Emergency", severity: "HIGH", nearbyFilter: "fire" },
+  { label: "Robbery", emoji: "🚨", input: "Robbery or theft in progress, need police", type: "Security Emergency", severity: "HIGH", nearbyFilter: "police" },
+  { label: "Need Ambulance", emoji: "🚑", input: "Medical emergency, ambulance required immediately", type: "Medical Emergency", severity: "HIGH", nearbyFilter: "" },
+  { label: "Locked Out", emoji: "🔐", input: "Locked out of vehicle, need roadside assistance", type: "Vehicle Breakdown", severity: "LOW", nearbyFilter: "mechanic" },
 ];
 
 type EmergencyType =
@@ -103,9 +103,9 @@ function Emergency() {
     recognition.interimResults = true;
     recognition.lang = "en-IN";
 
-    recognition.onstart  = () => setIsListening(true);
-    recognition.onend    = () => setIsListening(false);
-    recognition.onerror  = () => setIsListening(false);
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
     recognition.onresult = (event: any) => {
       let transcript = "";
       for (let i = 0; i < event.results.length; i++) transcript += event.results[i][0].transcript;
@@ -116,7 +116,7 @@ function Emergency() {
   }, []);
 
   const startVoiceInput = () => recognitionRef.current?.start();
-  const stopVoiceInput  = () => recognitionRef.current?.stop();
+  const stopVoiceInput = () => recognitionRef.current?.stop();
 
   /** Chip tapped → instant dispatch (no textarea needed) */
   function handleChipTap(chip: ChipData) {
@@ -195,8 +195,8 @@ function Emergency() {
                   ${isFlashing
                     ? "bg-primary text-primary-foreground border-primary scale-95"
                     : isHighSeverity
-                    ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20"
-                    : "bg-accent text-accent-foreground border-border hover:bg-muted"
+                      ? "bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20"
+                      : "bg-accent text-accent-foreground border-border hover:bg-muted"
                   }
                 `}
               >
@@ -238,9 +238,8 @@ function Emergency() {
             {voiceSupported ? (
               <button
                 onClick={isListening ? stopVoiceInput : startVoiceInput}
-                className={`inline-flex items-center gap-2 text-sm font-semibold transition ${
-                  isListening ? "text-destructive" : "text-primary"
-                }`}
+                className={`inline-flex items-center gap-2 text-sm font-semibold transition ${isListening ? "text-destructive" : "text-primary"
+                  }`}
               >
                 <span className={`w-9 h-9 rounded-full flex items-center justify-center ${isListening ? "bg-destructive/10 animate-pulse" : "bg-primary/10"}`}>
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -296,11 +295,10 @@ function Emergency() {
           <button
             onClick={handleAnalyze}
             disabled={!text.trim()}
-            className={`w-full inline-flex items-center justify-center gap-2 font-bold py-4 rounded-2xl shadow-emergency transition ${
-              text.trim()
-                ? "bg-gradient-emergency text-emergency-foreground active:scale-[0.98]"
-                : "bg-muted text-muted-foreground opacity-50 cursor-not-allowed"
-            }`}
+            className={`w-full inline-flex items-center justify-center gap-2 font-bold py-4 rounded-2xl shadow-emergency transition ${text.trim()
+              ? "bg-gradient-emergency text-emergency-foreground active:scale-[0.98]"
+              : "bg-muted text-muted-foreground opacity-50 cursor-not-allowed"
+              }`}
           >
             <Sparkles className="w-5 h-5" />
             {text.trim() ? "Analyze Emergency" : "Type above or tap a chip"}
