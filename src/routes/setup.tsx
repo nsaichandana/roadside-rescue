@@ -5,6 +5,7 @@ import {
   AlertCircle, Stethoscope, CheckCircle2,
 } from "lucide-react";
 import { saveUserProfile, getUserProfile } from "@/firebase/users";
+import { getMedicalIdProfile, saveMedicalIdProfile } from "@/utils/medicalId";
 
 export const Route = createFileRoute("/setup")({
   component: Setup,
@@ -132,6 +133,7 @@ function Setup() {
   const [saved, setSaved]           = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [errors, setErrors]         = useState<FormErrors>({});
+  const [allergies, setAllergies]   = useState("");
 
   const [formData, setFormData] = useState<FormData>({
     fullName: "",
@@ -159,6 +161,8 @@ function Setup() {
           try {
             const parsed = JSON.parse(local);
             setIsEditMode(true);
+            const med = getMedicalIdProfile();
+            if (med?.allergies) setAllergies(med.allergies);
             setFormData({
               fullName:              parsed.fullName              || "",
               phone:                 parsed.phone                 || "",
@@ -179,6 +183,8 @@ function Setup() {
           if (fromEdit) {
             setIsEditMode(true);
             const p = profile as any;
+            const med = getMedicalIdProfile();
+            if (med?.allergies) setAllergies(med.allergies);
             setFormData({
               fullName:              p.fullName              || "",
               phone:                 p.phone                 || "",
@@ -223,12 +229,26 @@ function Setup() {
       ]);
       // Save with consistent field names that all other pages read
       localStorage.setItem("roadsos-user", JSON.stringify(formData));
+      // Phase 2: Medical ID (offline-first, local-only)
+      saveMedicalIdProfile({
+        name: formData.fullName,
+        bloodGroup: formData.bloodGroup,
+        allergies: allergies.trim(),
+        conditions: formData.medicalConditions.trim(),
+      });
       setSaved(true);
       setTimeout(() => navigate({ to: "/home" }), 1000);
     } catch (e) {
       console.error("Failed to save profile", e);
       // Still save locally even if Firebase fails
       localStorage.setItem("roadsos-user", JSON.stringify(formData));
+      // Phase 2: Medical ID (offline-first, local-only)
+      saveMedicalIdProfile({
+        name: formData.fullName,
+        bloodGroup: formData.bloodGroup,
+        allergies: allergies.trim(),
+        conditions: formData.medicalConditions.trim(),
+      });
       setSaved(true);
       setTimeout(() => navigate({ to: "/home" }), 1000);
     } finally {
@@ -374,6 +394,20 @@ function Setup() {
             rows={3}
             className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground/60 resize-none"
           />
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-foreground mb-1.5">
+              Allergies (Medical ID)
+            </p>
+            <input
+              value={allergies}
+              onChange={(e) => setAllergies(e.target.value)}
+              placeholder="e.g. Penicillin, peanuts, latex…"
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground/60"
+            />
+            <p className="mt-2 text-xs text-muted-foreground">
+              Stored offline for emergency responders. Included in SOS payload if available.
+            </p>
+          </div>
           <p className="mt-2 text-xs text-muted-foreground">
             Helps paramedics treat you correctly in an emergency.
           </p>

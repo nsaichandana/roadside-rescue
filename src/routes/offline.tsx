@@ -20,6 +20,7 @@ import {
   getCountryEmergencySync,
   type CountryEmergency,
 } from "@/utils/countryEmergency";
+import { getMedicalIdProfile } from "@/utils/medicalId";
 
 export const Route = createFileRoute("/offline")({ component: Offline });
 
@@ -263,6 +264,7 @@ function Offline() {
     { name: string; phone: string; label: string }[]
   >([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [medicalIdAllergies, setMedicalIdAllergies] = useState<string>("");
   const [lastSync, setLastSync] = useState("Never");
   const [lastLocation, setLastLocation] = useState<string | null>(null);
 
@@ -295,6 +297,9 @@ function Offline() {
         setProfileContacts(pc);
       } catch { /* ignore */ }
     }
+
+    const med = getMedicalIdProfile();
+    if (med?.allergies) setMedicalIdAllergies(med.allergies);
 
     // Load real cached nearby places written by nearby.tsx
     const savedPlaces = localStorage.getItem("roadsos-last-places");
@@ -377,6 +382,11 @@ function Offline() {
                   {profile.medicalConditions && (
                     <span className="text-xs text-warning-foreground font-medium">
                       ⚠️ {profile.medicalConditions}
+                    </span>
+                  )}
+                  {medicalIdAllergies && (
+                    <span className="text-xs text-warning-foreground font-medium">
+                      🚫 Allergies: {medicalIdAllergies}
                     </span>
                   )}
                 </div>
