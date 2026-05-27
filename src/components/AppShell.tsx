@@ -19,7 +19,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="w-full max-w-2xl flex flex-col min-h-screen relative">
         <main className="flex-1 pb-24">{children}</main>
 
-        {/* Floating SOS button — visible on every screen except /sos */}
         {showFloatingSOS && (
           <Link
             to="/sos"
@@ -85,13 +84,14 @@ export function ScreenHeader({
 }
 
 export function StatusBar() {
-  // Task 4: Replace hardcoded "Online" with live navigator.onLine detection
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [battery, setBattery] = useState<number | null>(null);
+  const [isCharging, setIsCharging] = useState<boolean | null>(null);
 
+  // Live online/offline detection
   useEffect(() => {
     function handleOnline() { setIsOnline(true); }
     function handleOffline() { setIsOnline(false); }
-
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     return () => {
@@ -100,11 +100,32 @@ export function StatusBar() {
     };
   }, []);
 
+  // Real Battery API — Chrome/Android only, silent fallback on Safari/Firefox
+  useEffect(() => {
+    const nav = navigator as any;
+    if (!nav.getBattery) return;
+
+    nav.getBattery().then((bat: any) => {
+      setBattery(Math.round(bat.level * 100));
+      setIsCharging(bat.charging);
+      bat.onlevelchange = () => setBattery(Math.round(bat.level * 100));
+      bat.onchargingchange = () => setIsCharging(bat.charging);
+    }).catch(() => { /* ignore */ });
+  }, []);
+
+  // Red < 20%, amber < 40%, default otherwise
+  function batteryColor(level: number): string {
+    if (level < 20) return "text-destructive";
+    if (level < 40) return "text-warning-foreground";
+    return "text-muted-foreground";
+  }
+
   return (
     <div className="mx-5 mb-4 flex items-center gap-2 text-xs">
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 text-success font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> GPS
       </span>
+
       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${isOnline
           ? "bg-success/10 text-success"
           : "bg-warning/10 text-warning-foreground"
@@ -113,9 +134,13 @@ export function StatusBar() {
           }`} />
         {isOnline ? "Online" : "Offline"}
       </span>
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium ml-auto">
-        Battery 87%
-      </span>
+
+      {/* Battery — only rendered if API is supported (hides on Safari/Firefox) */}
+      {battery !== null && (
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted font-medium ml-auto ${batteryColor(battery)}`}>
+          {isCharging ? "⚡" : "🔋"} {battery}%
+        </span>
+      )}
     </div>
   );
 }
