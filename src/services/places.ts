@@ -223,7 +223,7 @@ function getTypeScore(
 
     case "Fire Emergency":
       if (placeType === "fire_station")                                     return 140;
-      if (name.includes("fire") || name.includes("damkal") || name.includes("agnishaman")) return 130;
+      if (name.includes("fire") || name.includes("damkal") || name.includes("agnishaman") || name.includes("agni") || name.includes("fire brigade") || name.includes("fire dept")) return 130;
       if (placeType.includes("hospital"))                                   return 70;
       if (placeType.includes("police"))                                     return 60;
       return 40;
@@ -248,8 +248,8 @@ function getTypeScore(
       return 50;
 
     case "Security Emergency":
-      if (placeType.includes("police"))                                     return 120;
-      if (name.includes("police") || name.includes("thana") || name.includes("chowki")) return 115;
+      if (placeType.includes("police") || placeType === "police_station")      return 120;
+      if (name.includes("police") || name.includes("thana") || name.includes("thane") || name.includes("chowki") || name.includes("kotwali")) return 115;
       return 50;
 
     default:
@@ -281,15 +281,13 @@ function normaliseType(osmType: string, name: string, emergencyInput?: string): 
   if (osmType === "fire_station" || n.includes("fire"))   return "fire_station";
   if (osmType === "pharmacy")                             return "pharmacy";
   if (osmType === "fuel")                                 return "fuel";
-  if (osmType === "police")                               return "police";
+  if (osmType === "police" || osmType === "police_station") return "police";
+  if (osmType === "car" || osmType === "motorcycle")      return "showroom";
   if (osmType === "hospital") {
     if (n.includes("ambulance"))                          return "ambulance";
     return "hospital";
   }
   if (osmType === "clinic" || osmType === "doctors")      return "hospital";
-  if (osmType === "car" || osmType === "motorcycle") {
-    return "showroom";
-  }
   if (osmType === "car_repair" || osmType === "car_parts" || osmType === "tyres" || osmType === "motorcycle_repair" || osmType === "bicycle_repair") {
     if (input.includes("showroom") || input.includes("service centre") || n.includes("showroom") || n.includes("service centre") || n.includes("authorized") || n.includes("authorised")) return "showroom";
     return "mechanic";
@@ -319,7 +317,12 @@ function buildOverpassQuery(
     : "";
 
   const fireFallback = emergencyType === "Fire Emergency"
-    ? `node[name~"fire brigade|fire service|agnishaman|damkal|fire station",i](around:${radius},${latitude},${longitude});`
+    ? `node[name~"fire brigade|fire service|agnishaman|damkal|fire station|agni shaman|fire dept|fire department",i](around:${radius},${latitude},${longitude});
+  way[name~"fire brigade|fire service|agnishaman|damkal|fire station|agni shaman|fire dept|fire department",i](around:${radius},${latitude},${longitude});
+  node["amenity"="fire_station"](around:${radius},${latitude},${longitude});
+  way["amenity"="fire_station"](around:${radius},${latitude},${longitude});
+  node["government"="fire_station"](around:${radius},${latitude},${longitude});
+  way["government"="fire_station"](around:${radius},${latitude},${longitude});`
     : "";
 
   const towingFallback = emergencyType === "Vehicle Breakdown"
@@ -337,12 +340,18 @@ function buildOverpassQuery(
     (input.includes("showroom") || input.includes("service centre") || input.includes("service center"))
       ? `node["shop"="car"](around:${radius},${latitude},${longitude});
   way["shop"="car"](around:${radius},${latitude},${longitude});
-  node["shop"="car_repair"](around:${radius},${latitude},${longitude});
-  way["shop"="car_repair"](around:${radius},${latitude},${longitude});
   node["shop"="motorcycle"](around:${radius},${latitude},${longitude});
   way["shop"="motorcycle"](around:${radius},${latitude},${longitude});
-  node[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});`
+  node[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});
+  way[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});`
       : "";
+
+  const policeFallback = emergencyType === "Security Emergency"
+    ? `node["amenity"="police_station"](around:${radius},${latitude},${longitude});
+  way["amenity"="police_station"](around:${radius},${latitude},${longitude});
+  node[name~"police|thana|thane|chowki|chowkey|kotwali|police station|police chowki",i](around:${radius},${latitude},${longitude});
+  way[name~"police|thana|thane|chowki|chowkey|kotwali|police station|police chowki",i](around:${radius},${latitude},${longitude});`
+    : "";
 
   const emergencyHospitals = emergencyType === "Medical Emergency"
     ? `node["amenity"="hospital"]["emergency"="yes"](around:${radius},${latitude},${longitude});
@@ -352,6 +361,7 @@ function buildOverpassQuery(
   return `
 [out:json][timeout:20];
 (
+  ${policeFallback}
   ${emergencyHospitals}
   ${allTags.map((tag) =>
     `node["amenity"="${tag}"](around:${radius},${latitude},${longitude});
