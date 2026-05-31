@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/countryEmergency";
+import { getMedicalIdProfile, type MedicalIdProfile } from "@/utils/medicalId";
 
 export const Route = createFileRoute("/sos")({
   component: () => <EmergencyFallback><SOS /></EmergencyFallback>,
@@ -129,7 +130,8 @@ function buildMessage(
   location: LocationData | null,
   address: string,
   nearestHospital: string,
-  time: string
+  time: string,
+  medicalId: MedicalIdProfile | null
 ): string {
   const mapsLink = location
     ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
@@ -137,11 +139,17 @@ function buildMessage(
   const medNote = user.medicalConditions
     ? `\n⚕️ Medical Info: ${user.medicalConditions}`
     : "";
+  const medicalIdLine = medicalId?.conditions
+    ? `\n🧾 Medical ID Conditions: ${medicalId.conditions}`
+    : "";
+  const allergiesLine = medicalId?.allergies
+    ? `\n🚫 Allergies: ${medicalId.allergies}`
+    : "";
   const addressLine = address ? `📍 Address: ${address}\n` : "";
   return (
     `🚨 EMERGENCY SOS — RoadSOS\n\n` +
     `👤 Name: ${user.fullName}\n` +
-    `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
+    `🩸 Blood Group: ${user.bloodGroup}${medNote}${medicalIdLine}${allergiesLine}\n` +
     `📞 Phone: ${user.phone}\n\n` +
     (mapsLink
       ? `🗺️ Live Location:\n${mapsLink}\n${addressLine}\n`
@@ -163,9 +171,16 @@ function SOS() {
   const [locationError, setLocationError] = useState("");
   const [location, setLocation] = useState<LocationData | null>(null);
   // FIX: new state for human-readable address
+<<<<<<< HEAD
   const [address, setAddress] = useState<string>("");
   const [user, setUser] = useState<UserData | null>(null);
   const [allContacts, setAllContacts] = useState<SavedContact[]>([]);
+=======
+  const [address, setAddress]                 = useState<string>("");
+  const [user, setUser]                       = useState<UserData | null>(null);
+  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
+  const [medicalId, setMedicalId]             = useState<MedicalIdProfile | null>(null);
+>>>>>>> phase2-panic-audio
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
@@ -173,6 +188,7 @@ function SOS() {
     if (savedUser) {
       try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
+    setMedicalId(getMedicalIdProfile());
     const savedContacts = localStorage.getItem("roadsos-contacts");
     if (savedContacts) {
       try { setAllContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
@@ -310,7 +326,7 @@ function SOS() {
     }
 
     // FIX: pass address into buildMessage
-    const msgText = buildMessage(user, location, address, nearestHospital, currentTime);
+    const msgText = buildMessage(user, location, address, nearestHospital, currentTime, medicalId);
 
     const emergencyPhones: { name: string; phone: string }[] = [];
     const ec1Phone = user.emergencyContact1Phone || user.emergency1 || "";
@@ -531,6 +547,9 @@ function SOS() {
                 <p className="text-xs text-muted-foreground">{user?.fullName || "Unknown User"}</p>
                 {user?.medicalConditions && (
                   <p className="text-xs text-warning-foreground mt-0.5">⚠️ {user.medicalConditions}</p>
+                )}
+                {medicalId?.allergies && (
+                  <p className="text-xs text-warning-foreground mt-0.5">🚫 Allergies: {medicalId.allergies}</p>
                 )}
               </div>
             </div>
