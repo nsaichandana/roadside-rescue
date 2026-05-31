@@ -279,7 +279,7 @@ function normaliseType(osmType: string, name: string, emergencyInput?: string): 
   const input = (emergencyInput || "").toLowerCase();
   const n = name.toLowerCase();
   if (osmType === "fire_station" || n.includes("fire")) return "fire_station";
-  if (osmType === "pharmacy") return "pharmacy";
+  if (osmType === "pharmacy" || osmType === "chemist") return "pharmacy";
   if (osmType === "fuel") return "fuel";
   if (osmType === "police") return "police";
   if (osmType === "hospital") {
@@ -306,6 +306,14 @@ function buildOverpassQuery(
   const { primary, secondary } = getSearchTags(emergencyType, emergencyInput);
   const allTags = [...primary, ...secondary];
   const input = (emergencyInput || "").toLowerCase();
+
+  // Pharmacy: OSM tags both amenity=pharmacy AND shop=pharmacy — query both
+  const pharmacyFallback = allTags.includes("pharmacy")
+    ? `node["shop"="pharmacy"](around:${radius},${latitude},${longitude});
+  way["shop"="pharmacy"](around:${radius},${latitude},${longitude});
+  node["amenity"="pharmacy"](around:${radius},${latitude},${longitude});
+  way["amenity"="pharmacy"](around:${radius},${latitude},${longitude});`
+    : "";
 
   const fireFallback = emergencyType === "Fire Emergency"
     ? `node[name~"fire brigade|fire service|agnishaman|damkal|fire station",i](around:${radius},${latitude},${longitude});`
@@ -334,6 +342,7 @@ function buildOverpassQuery(
     `node["amenity"="${tag}"](around:${radius},${latitude},${longitude});
   way["amenity"="${tag}"](around:${radius},${latitude},${longitude});`
   ).join("\n  ")}
+  ${pharmacyFallback}
   ${fireFallback}
   ${towingFallback}
   ${showroomFallback}
@@ -463,16 +472,24 @@ export async function fetchNearbyPlaces(
     }
   }
 
-  return getCachedPlaces();
+  return getCachedPlaces(emergencyType);
 }
 
 // ─── Cache Helpers ────────────────────────────────────────────────────────────
 
-export function getCachedPlaces(): NearbyPlace[] {
+export function getCachedPlaces(emergencyType?: EmergencyType): NearbyPlace[] {
   try {
     const cached = localStorage.getItem("roadsos-last-places");
     if (!cached) return [];
     const parsed = JSON.parse(cached);
+
+    // Type-filter: if cached type doesn't match current emergency, return empty
+    // so the UI shows "no results" rather than stale wrong-type results
+    if (emergencyType) {
+      const cachedType = localStorage.getItem("roadsos-last-places-type");
+      if (cachedType && cachedType !== emergencyType) return [];
+    }
+
     return parsed.map((p: any) => ({
       id: p.id || String(Math.random()),
       name: p.name,
