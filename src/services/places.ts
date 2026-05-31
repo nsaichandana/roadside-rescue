@@ -47,7 +47,7 @@ export type NearbyPlace = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DISTANCE_WEIGHT = 15;
+const DISTANCE_WEIGHT = 5;
 
 // ─── Specialisation matching ──────────────────────────────────────────────────
 
@@ -287,8 +287,11 @@ function normaliseType(osmType: string, name: string, emergencyInput?: string): 
     return "hospital";
   }
   if (osmType === "clinic" || osmType === "doctors")      return "hospital";
+  if (osmType === "car" || osmType === "motorcycle") {
+    return "showroom";
+  }
   if (osmType === "car_repair" || osmType === "car_parts" || osmType === "tyres" || osmType === "motorcycle_repair" || osmType === "bicycle_repair") {
-    if (input.includes("showroom") || n.includes("showroom")) return "showroom";
+    if (input.includes("showroom") || input.includes("service centre") || n.includes("showroom") || n.includes("service centre") || n.includes("authorized") || n.includes("authorised")) return "showroom";
     return "mechanic";
   }
   return osmType;
@@ -323,6 +326,8 @@ function buildOverpassQuery(
     ? `node[name~"towing|tow truck|puncture|tyre|tire|garage|mechanic|workshop|auto repair|bike repair|vehicle rescue|car rescue",i](around:${radius},${latitude},${longitude});
   node["shop"="car_repair"](around:${radius},${latitude},${longitude});
   way["shop"="car_repair"](around:${radius},${latitude},${longitude});
+  node["shop"="car"](around:${radius},${latitude},${longitude});
+  way["shop"="car"](around:${radius},${latitude},${longitude});
   node["shop"="tyres"](around:${radius},${latitude},${longitude});
   way["shop"="tyres"](around:${radius},${latitude},${longitude});`
     : "";
@@ -330,7 +335,13 @@ function buildOverpassQuery(
   const showroomFallback =
     emergencyType === "Vehicle Breakdown" &&
     (input.includes("showroom") || input.includes("service centre") || input.includes("service center"))
-      ? `node[name~"showroom|service centre|service center|authorized service|authorised service",i](around:${radius},${latitude},${longitude});`
+      ? `node["shop"="car"](around:${radius},${latitude},${longitude});
+  way["shop"="car"](around:${radius},${latitude},${longitude});
+  node["shop"="car_repair"](around:${radius},${latitude},${longitude});
+  way["shop"="car_repair"](around:${radius},${latitude},${longitude});
+  node["shop"="motorcycle"](around:${radius},${latitude},${longitude});
+  way["shop"="motorcycle"](around:${radius},${latitude},${longitude});
+  node[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});`
       : "";
 
   const emergencyHospitals = emergencyType === "Medical Emergency"
