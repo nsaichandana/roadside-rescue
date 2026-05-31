@@ -1,5 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { EmergencyFallback } from "@/components/EmergencyFallback";
 import {
   Siren, MapPin, Check, Phone, Clock3,
   ShieldAlert, HeartPulse, Loader2, Navigation, AlertTriangle,
@@ -9,11 +8,10 @@ import { useEffect, useState } from "react";
 import { AppShell, ScreenHeader } from "@/components/AppShell";
 import { getPeakHourWarning } from "@/utils/emergencyIntelligence";
 import { getCountryEmergencySync, normalisePhoneForCountry } from "@/utils/countryEmergency";
-import { getMedicalIdProfile, type MedicalIdProfile } from "@/utils/medicalId";
+import { getUserLocation } from "@/services/location";
+import { SmsManager } from "@byteowls/capacitor-sms";
 
-export const Route = createFileRoute("/sos")({
-  component: () => <EmergencyFallback><SOS /></EmergencyFallback>,
-});
+export const Route = createFileRoute("/sos")({ component: SOS });
 
 // ── Fast2SMS silent send ──────────────────────────────────────────────────────
 type SendStatus = {
@@ -130,8 +128,7 @@ function buildMessage(
   location: LocationData | null,
   address: string,
   nearestHospital: string,
-  time: string,
-  medicalId: MedicalIdProfile | null
+  time: string
 ): string {
   const mapsLink = location
     ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
@@ -139,17 +136,11 @@ function buildMessage(
   const medNote = user.medicalConditions
     ? `\n⚕️ Medical Info: ${user.medicalConditions}`
     : "";
-  const medicalIdLine = medicalId?.conditions
-    ? `\n🧾 Medical ID Conditions: ${medicalId.conditions}`
-    : "";
-  const allergiesLine = medicalId?.allergies
-    ? `\n🚫 Allergies: ${medicalId.allergies}`
-    : "";
   const addressLine = address ? `📍 Address: ${address}\n` : "";
   return (
     `🚨 EMERGENCY SOS — RoadSOS\n\n` +
     `👤 Name: ${user.fullName}\n` +
-    `🩸 Blood Group: ${user.bloodGroup}${medNote}${medicalIdLine}${allergiesLine}\n` +
+    `🩸 Blood Group: ${user.bloodGroup}${medNote}\n` +
     `📞 Phone: ${user.phone}\n\n` +
     (mapsLink
       ? `🗺️ Live Location:\n${mapsLink}\n${addressLine}\n`
@@ -161,20 +152,19 @@ function buildMessage(
 }
 
 function SOS() {
-  const [sent, setSent] = useState(false);
-  const [retryQueued, setRetryQueued] = useState(false);
-  const [sendStatuses, setSendStatuses] = useState<SendStatus[]>([]);
-  const [apiSending, setApiSending] = useState(false);
-  const [holding, setHolding] = useState(false);
-  const [time, setTime] = useState("");
+  const [sent, setSent]                       = useState(false);
+  const [retryQueued, setRetryQueued]         = useState(false);
+  const [sendStatuses, setSendStatuses]       = useState<SendStatus[]>([]);
+  const [apiSending, setApiSending]           = useState(false);
+  const [holding, setHolding]                 = useState(false);
+  const [time, setTime]                       = useState("");
   const [loadingLocation, setLoadingLocation] = useState(true);
-  const [locationError, setLocationError] = useState("");
-  const [location, setLocation] = useState<LocationData | null>(null);
+  const [locationError, setLocationError]     = useState("");
+  const [location, setLocation]               = useState<LocationData | null>(null);
   // FIX: new state for human-readable address
-  const [address, setAddress] = useState<string>("");
-  const [user, setUser] = useState<UserData | null>(null);
-  const [allContacts, setAllContacts] = useState<SavedContact[]>([]);
-  const [medicalId, setMedicalId] = useState<MedicalIdProfile | null>(null);
+  const [address, setAddress]                 = useState<string>("");
+  const [user, setUser]                       = useState<UserData | null>(null);
+  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
@@ -182,7 +172,6 @@ function SOS() {
     if (savedUser) {
       try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
     }
-    setMedicalId(getMedicalIdProfile());
     const savedContacts = localStorage.getItem("roadsos-contacts");
     if (savedContacts) {
       try { setAllContacts(JSON.parse(savedContacts)); } catch { /* ignore */ }
@@ -216,79 +205,18 @@ function SOS() {
     reverseGeocode(location.latitude, location.longitude).then(setAddress);
   }, [location]);
 
-  function fetchLocation() {
-    if (!navigator.geolocation) {
-      setLocationError("GPS not supported on this device.");
+  async function fetchLocation() {
+    try {
+      const loc = await getUserLocation();
+      setLocation({ latitude: loc.latitude, longitude: loc.longitude });
       setLoadingLocation(false);
-      return;
+    } catch {
+      setLocationError("Location unavailable — please share your location manually.");
+      setLoadingLocation(false);
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
-        setLoadingLocation(false);
-        navigator.geolocation.getCurrentPosition(
-          (precise) => {
-            setLocation({ latitude: precise.coords.latitude, longitude: precise.coords.longitude });
-          },
-          () => { /* already have coarse location */ },
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-        );
-      },
-      () => {
-        let recovered = false;
-        const lastLoc = localStorage.getItem("roadsos-last-location");
-        if (lastLoc) {
-          try {
-            const d = JSON.parse(lastLoc);
-            // FIX: check both d.lon and d.lng (trip.tsx writes lng)
-            if (d?.lat && (d?.lon ?? d?.lng)) {
-              setLocation({ latitude: d.lat, longitude: d.lon ?? d.lng });
-              recovered = true;
-            }
-          } catch { /* ignore */ }
-        }
-
-        if (!recovered) {
-          const cachedPlaces = localStorage.getItem("roadsos-last-places");
-          if (cachedPlaces) {
-            try {
-              const places = JSON.parse(cachedPlaces);
-              if (Array.isArray(places) && places[0]?.lat && places[0]?.lon) {
-                setLocation({ latitude: places[0].lat, longitude: places[0].lon });
-                recovered = true;
-              } else if (!Array.isArray(places) && places?.lat && places?.lon) {
-                setLocation({ latitude: places.lat, longitude: places.lon });
-                recovered = true;
-              }
-            } catch { /* ignore */ }
-          }
-        }
-
-        if (!recovered) {
-          const tripOrigin = localStorage.getItem("roadsos-trip-origin");
-          if (tripOrigin) {
-            try {
-              const d = JSON.parse(tripOrigin);
-              if (d?.lat && (d?.lon ?? d?.lng)) {
-                setLocation({ latitude: d.lat, longitude: d.lon ?? d.lng });
-                recovered = true;
-              }
-            } catch { /* ignore */ }
-          }
-        }
-
-        setLocationError(
-          recovered
-            ? "Live GPS unavailable — using last known location."
-            : "Location unavailable — please share your location manually."
-        );
-        setLoadingLocation(false);
-      },
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
-    );
   }
 
-  function sendSOS() {
+  async function sendSOS() {
     if (!user) return;
 
     const currentTime = new Date().toLocaleTimeString([], {
@@ -320,13 +248,13 @@ function SOS() {
     }
 
     // FIX: pass address into buildMessage
-    const msgText = buildMessage(user, location, address, nearestHospital, currentTime, medicalId);
+    const msgText = buildMessage(user, location, address, nearestHospital, currentTime);
 
     const emergencyPhones: { name: string; phone: string }[] = [];
     const ec1Phone = user.emergencyContact1Phone || user.emergency1 || "";
-    const ec1Name = user.emergencyContact1Name || user.emergency1Name || "Emergency Contact 1";
+    const ec1Name  = user.emergencyContact1Name  || user.emergency1Name || "Emergency Contact 1";
     const ec2Phone = user.emergencyContact2Phone || user.emergency2 || "";
-    const ec2Name = user.emergencyContact2Name || user.emergency2Name || "Emergency Contact 2";
+    const ec2Name  = user.emergencyContact2Name  || user.emergency2Name || "Emergency Contact 2";
 
     if (ec1Phone) emergencyPhones.push({ name: ec1Name, phone: ec1Phone });
     if (ec2Phone) emergencyPhones.push({ name: ec2Name, phone: ec2Phone });
@@ -356,31 +284,23 @@ function SOS() {
           })));
           setApiSending(false);
         })
-        .catch(() => {
+        .catch(async () => {
           setApiSending(false);
           setSendStatuses(allPhones.map((c) => ({
             phone: c.phone,
             name: c.name,
             status: "failed",
           })));
-          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-          if (isIOS) {
-            allPhones.forEach((contact, i) => {
-              setTimeout(() => {
-                const a = document.createElement("a");
-                a.href = `sms:${contact.phone}&body=${encodeURIComponent(msgText)}`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              }, i * 1000);
-            });
-          } else {
-            const numbers = allPhones.map((c) => c.phone).join(";");
-            const a = document.createElement("a");
-            a.href = `sms:${numbers}?body=${encodeURIComponent(msgText)}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+          // Capacitor native SMS fallback
+          for (const contact of allPhones) {
+            try {
+              await SmsManager.send({
+                numbers: [contact.phone],
+                text: msgText,
+              });
+            } catch {
+              // If native SMS also fails, silently continue — WhatsApp already sent
+            }
           }
         });
     }
@@ -397,9 +317,9 @@ function SOS() {
   }
 
   const ec1Phone = user?.emergencyContact1Phone || user?.emergency1 || "";
-  const ec1Name = user?.emergencyContact1Name || user?.emergency1Name || "Emergency Contact 1";
+  const ec1Name  = user?.emergencyContact1Name  || user?.emergency1Name || "Emergency Contact 1";
   const ec2Phone = user?.emergencyContact2Phone || user?.emergency2 || "";
-  const ec2Name = user?.emergencyContact2Name || user?.emergency2Name || "Emergency Contact 2";
+  const ec2Name  = user?.emergencyContact2Name  || user?.emergency2Name || "Emergency Contact 2";
 
   const displayContacts = [
     ...(ec1Phone ? [{ name: ec1Name, phone: ec1Phone, tag: "Primary", whatsapp: true }] : []),
@@ -459,8 +379,9 @@ function SOS() {
             onTouchStart={() => setHolding(true)}
             onTouchEnd={(e) => { e.preventDefault(); setHolding(false); sendSOS(); }}
             disabled={!user}
-            className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${holding ? "scale-95" : "animate-pulse-ring"
-              } disabled:opacity-50`}
+            className={`relative mx-auto w-44 h-44 rounded-full bg-gradient-emergency text-emergency-foreground font-black text-xl shadow-emergency flex items-center justify-center transition-transform ${
+              holding ? "scale-95" : "animate-pulse-ring"
+            } disabled:opacity-50`}
           >
             <div className="flex flex-col items-center gap-2">
               <Siren className="w-10 h-10" />
@@ -541,9 +462,6 @@ function SOS() {
                 <p className="text-xs text-muted-foreground">{user?.fullName || "Unknown User"}</p>
                 {user?.medicalConditions && (
                   <p className="text-xs text-warning-foreground mt-0.5">⚠️ {user.medicalConditions}</p>
-                )}
-                {medicalId?.allergies && (
-                  <p className="text-xs text-warning-foreground mt-0.5">🚫 Allergies: {medicalId.allergies}</p>
                 )}
               </div>
             </div>
@@ -656,7 +574,7 @@ function SOS() {
             return [
               { label: "Emergency", num: c.allEmergency },
               { label: "Ambulance", num: c.ambulance },
-              { label: "Police", num: c.police },
+              { label: "Police",    num: c.police },
               { label: c.highwayLabel ?? "Highway", num: c.highway ?? c.police },
             ];
           })().map((e) => (
