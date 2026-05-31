@@ -171,16 +171,10 @@ function SOS() {
   const [locationError, setLocationError] = useState("");
   const [location, setLocation] = useState<LocationData | null>(null);
   // FIX: new state for human-readable address
-<<<<<<< HEAD
   const [address, setAddress] = useState<string>("");
   const [user, setUser] = useState<UserData | null>(null);
   const [allContacts, setAllContacts] = useState<SavedContact[]>([]);
-=======
-  const [address, setAddress]                 = useState<string>("");
-  const [user, setUser]                       = useState<UserData | null>(null);
-  const [allContacts, setAllContacts]         = useState<SavedContact[]>([]);
-  const [medicalId, setMedicalId]             = useState<MedicalIdProfile | null>(null);
->>>>>>> phase2-panic-audio
+  const [medicalId, setMedicalId] = useState<MedicalIdProfile | null>(null);
   const peakWarning = getPeakHourWarning();
 
   useEffect(() => {
