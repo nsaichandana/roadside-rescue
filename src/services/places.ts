@@ -100,7 +100,7 @@ function getSearchTags(emergencyType: EmergencyType, emergencyInput?: string): {
 } {
   const input = (emergencyInput || "").toLowerCase();
   const wantsPharmacy = input.includes("pharmacy") || input.includes("medical store") || input.includes("medicine");
-  const wantsFuel = input.includes("fuel") || input.includes("petrol") || input.includes("cng") || input.includes("diesel");
+  const wantsFuel     = input.includes("fuel") || input.includes("petrol") || input.includes("cng") || input.includes("diesel");
   const wantsShowroom = input.includes("showroom") || input.includes("service centre") || input.includes("service center");
 
   switch (emergencyType) {
@@ -111,9 +111,9 @@ function getSearchTags(emergencyType: EmergencyType, emergencyInput?: string): {
       return { primary: ["hospital", "clinic"], secondary: ["doctors", "pharmacy"] };
 
     case "Vehicle Breakdown":
-      if (wantsFuel) return { primary: ["fuel"], secondary: ["car_repair", "car_parts"] };
+      if (wantsFuel)     return { primary: ["fuel"],       secondary: ["car_repair", "car_parts"] };
       if (wantsShowroom) return { primary: ["car_repair"], secondary: ["fuel", "car_parts"] };
-      return { primary: ["car_repair"], secondary: ["fuel", "car_parts"] };
+      return               { primary: ["car_repair"],      secondary: ["fuel", "car_parts"] };
 
     case "Fire Emergency":
       return { primary: ["fire_station"], secondary: ["hospital", "police"] };
@@ -128,11 +128,11 @@ function getSearchTags(emergencyType: EmergencyType, emergencyInput?: string): {
 
 function getSearchRadii(emergencyType: EmergencyType): number[] {
   switch (emergencyType) {
-    case "Medical Emergency": return [5000, 15000, 30000];
-    case "Vehicle Breakdown": return [5000, 10000, 20000];
-    case "Fire Emergency": return [3000, 10000, 25000];  // FIX: was [10000,25000,50000]
-    case "Security Emergency": return [5000, 15000, 30000];
-    default: return [7000, 20000, 40000];
+    case "Medical Emergency":   return [5000, 15000, 30000];
+    case "Vehicle Breakdown":   return [5000, 10000, 20000];
+    case "Fire Emergency":      return [3000, 10000, 25000];  // FIX: was [10000,25000,50000]
+    case "Security Emergency":  return [5000, 15000, 30000];
+    default:                    return [7000, 20000, 40000];
   }
 }
 
@@ -142,7 +142,7 @@ export function calculateDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number,
 ): number {
-  const R = 6371;
+  const R    = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -154,13 +154,13 @@ export function calculateDistance(
 }
 
 function estimateETA(distance: number): string {
-  const hour = new Date().getHours();
+  const hour   = new Date().getHours();
   const isPeak = (hour >= 7 && hour <= 10) || (hour >= 17 && hour <= 20);
 
   let speedKmh: number;
-  if (isPeak) speedKmh = 20;
+  if (isPeak)            speedKmh = 20;
   else if (distance < 5) speedKmh = 30;
-  else speedKmh = 50;
+  else                   speedKmh = 50;
 
   const mins = Math.max(1, Math.round((distance / speedKmh) * 60));
   if (mins >= 60) {
@@ -181,10 +181,10 @@ function getTypeScore(
   emergencyInput?: string,
   hospitalHint?: HospitalHint,
 ): number {
-  const name = placeName.toLowerCase();
-  const input = (emergencyInput || "").toLowerCase();
+  const name              = placeName.toLowerCase();
+  const input             = (emergencyInput || "").toLowerCase();
   const isEmergencyTagged = tags["emergency"] === "yes";
-  const isTraumaTagged =
+  const isTraumaTagged    =
     name.includes("trauma") ||
     name.includes("aiims") ||
     name.includes("apex") ||
@@ -209,46 +209,46 @@ function getTypeScore(
   switch (emergencyType) {
     case "Medical Emergency":
       if (input.includes("pharmacy") || input.includes("medical store")) {
-        if (placeType === "pharmacy") return 130;
-        if (placeType.includes("hospital")) return 80;
+        if (placeType === "pharmacy")                                       return 130;
+        if (placeType.includes("hospital"))                                 return 80;
         if (placeType.includes("clinic") || placeType.includes("doctors")) return 70;
         return 40;
       }
-      if (isTraumaTagged) return 140;
-      if (isEmergencyTagged && placeType.includes("hospital")) return 130;
-      if (placeType.includes("hospital")) return 100;
-      if (placeType.includes("clinic") || placeType.includes("doctors")) return 70;
-      if (placeType === "pharmacy") return 60;
+      if (isTraumaTagged)                                                   return 140;
+      if (isEmergencyTagged && placeType.includes("hospital"))              return 130;
+      if (placeType.includes("hospital"))                                   return 100;
+      if (placeType.includes("clinic") || placeType.includes("doctors"))   return 70;
+      if (placeType === "pharmacy")                                         return 60;
       return 50;
 
     case "Fire Emergency":
-      if (placeType === "fire_station") return 140;
+      if (placeType === "fire_station")                                     return 140;
       if (name.includes("fire") || name.includes("damkal") || name.includes("agnishaman")) return 130;
-      if (placeType.includes("hospital")) return 70;
-      if (placeType.includes("police")) return 60;
+      if (placeType.includes("hospital"))                                   return 70;
+      if (placeType.includes("police"))                                     return 60;
       return 40;
 
     case "Vehicle Breakdown":
       if (input.includes("fuel") || input.includes("petrol") || input.includes("cng")) {
-        if (placeType === "fuel") return 140;
+        if (placeType === "fuel")             return 140;
         if (placeType.includes("car_repair")) return 70;
         return 40;
       }
       if (input.includes("showroom") || input.includes("service centre")) {
         if (name.includes("showroom") || name.includes("service centre") || name.includes("authorized")) return 140;
         if (placeType.includes("car_repair")) return 110;
-        if (placeType === "fuel") return 60;
+        if (placeType === "fuel")             return 60;
         return 40;
       }
-      if (name.includes("tow") || name.includes("towing")) return 115;
+      if (name.includes("tow") || name.includes("towing"))                 return 115;
       if (name.includes("puncture") || name.includes("tyre") || name.includes("tire")) return 110;
-      if (placeType.includes("car_repair")) return 100;
-      if (placeType === "fuel") return 80;
-      if (placeType.includes("car_parts")) return 75;
+      if (placeType.includes("car_repair"))                                 return 100;
+      if (placeType === "fuel")                                             return 80;
+      if (placeType.includes("car_parts"))                                  return 75;
       return 50;
 
     case "Security Emergency":
-      if (placeType.includes("police")) return 120;
+      if (placeType.includes("police"))                                     return 120;
       if (name.includes("police") || name.includes("thana") || name.includes("chowki")) return 115;
       return 50;
 
@@ -277,17 +277,17 @@ export function detectHeadTraumaRisk(input: string): boolean {
 
 function normaliseType(osmType: string, name: string, emergencyInput?: string): string {
   const input = (emergencyInput || "").toLowerCase();
-  const n = name.toLowerCase();
-  if (osmType === "fire_station" || n.includes("fire")) return "fire_station";
-  if (osmType === "pharmacy" || osmType === "chemist") return "pharmacy";
-  if (osmType === "fuel") return "fuel";
-  if (osmType === "police") return "police";
+  const n     = name.toLowerCase();
+  if (osmType === "fire_station" || n.includes("fire"))   return "fire_station";
+  if (osmType === "pharmacy")                             return "pharmacy";
+  if (osmType === "fuel")                                 return "fuel";
+  if (osmType === "police")                               return "police";
   if (osmType === "hospital") {
-    if (n.includes("ambulance")) return "ambulance";
+    if (n.includes("ambulance"))                          return "ambulance";
     return "hospital";
   }
-  if (osmType === "clinic" || osmType === "doctors") return "hospital";
-  if (osmType === "car_repair" || osmType === "car_parts") {
+  if (osmType === "clinic" || osmType === "doctors")      return "hospital";
+  if (osmType === "car_repair" || osmType === "car_parts" || osmType === "tyres" || osmType === "motorcycle_repair" || osmType === "bicycle_repair") {
     if (input.includes("showroom") || n.includes("showroom")) return "showroom";
     return "mechanic";
   }
@@ -304,8 +304,8 @@ function buildOverpassQuery(
   emergencyInput?: string,
 ): string {
   const { primary, secondary } = getSearchTags(emergencyType, emergencyInput);
-  const allTags = [...primary, ...secondary];
-  const input = (emergencyInput || "").toLowerCase();
+  const allTags                = [...primary, ...secondary];
+  const input                  = (emergencyInput || "").toLowerCase();
 
   // Pharmacy: OSM tags both amenity=pharmacy AND shop=pharmacy — query both
   const pharmacyFallback = allTags.includes("pharmacy")
@@ -320,12 +320,16 @@ function buildOverpassQuery(
     : "";
 
   const towingFallback = emergencyType === "Vehicle Breakdown"
-    ? `node[name~"towing|tow truck|puncture|tyre shop|tire shop|vehicle rescue|car rescue",i](around:${radius},${latitude},${longitude});`
+    ? `node[name~"towing|tow truck|puncture|tyre|tire|garage|mechanic|workshop|auto repair|bike repair|vehicle rescue|car rescue",i](around:${radius},${latitude},${longitude});
+  node["shop"="car_repair"](around:${radius},${latitude},${longitude});
+  way["shop"="car_repair"](around:${radius},${latitude},${longitude});
+  node["shop"="tyres"](around:${radius},${latitude},${longitude});
+  way["shop"="tyres"](around:${radius},${latitude},${longitude});`
     : "";
 
   const showroomFallback =
     emergencyType === "Vehicle Breakdown" &&
-      (input.includes("showroom") || input.includes("service centre") || input.includes("service center"))
+    (input.includes("showroom") || input.includes("service centre") || input.includes("service center"))
       ? `node[name~"showroom|service centre|service center|authorized service|authorised service",i](around:${radius},${latitude},${longitude});`
       : "";
 
@@ -360,27 +364,32 @@ export async function fetchNearbyPlaces(
   emergencyInput?: string,
   hospitalHint?: HospitalHint,       // ← NEW param
 ): Promise<NearbyPlace[]> {
-  const radii = getSearchRadii(emergencyType);
+  const radii        = getSearchRadii(emergencyType);
   const isTwoWheeler = emergencyInput ? detectTwoWheelerRisk(emergencyInput) : false;
   const isHeadTrauma = emergencyInput ? detectHeadTraumaRisk(emergencyInput) : false;
-  const needsTrauma = isTwoWheeler || isHeadTrauma;
+  const needsTrauma  = isTwoWheeler || isHeadTrauma;
 
   for (const radius of radii) {
     const query = buildOverpassQuery(latitude, longitude, radius, emergencyType, emergencyInput);
 
     try {
+      const controller = new AbortController();
+      const timeoutId  = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (!response.ok) continue;
 
       const data = await response.json();
       if (!data.elements || data.elements.length === 0) continue;
 
       // Deduplicate by OSM id (Bug 4)
-      const seen = new Set<string>();
+      const seen   = new Set<string>();
       const unique = (data.elements as any[]).filter((el) => {
         const key = `${el.type}-${el.id}`;
         if (seen.has(key)) return false;
@@ -395,10 +404,10 @@ export async function fetchNearbyPlaces(
           const lon = el.lon ?? el.center?.lon;
           if (lat == null || lon == null) return null;
 
-          const tags = el.tags || {};
-          const osmType = tags.amenity || tags.shop || "service";
-          const name = tags.name || "Emergency Service";
-          const type = normaliseType(osmType, name, emergencyInput);
+          const tags     = el.tags || {};
+          const osmType  = tags.amenity || tags.shop || "service";
+          const name     = tags.name || "Emergency Service";
+          const type     = normaliseType(osmType, name, emergencyInput);
           const distance = calculateDistance(latitude, longitude, lat, lon);
 
           if (isNaN(distance)) return null;
@@ -410,7 +419,7 @@ export async function fetchNearbyPlaces(
 
           // Bug 2 fix: distance-gated trauma boost
           if (needsTrauma) {
-            const n = name.toLowerCase();
+            const n             = name.toLowerCase();
             const isTraumaFacility =
               n.includes("trauma") || n.includes("neuro") ||
               n.includes("aiims") || n.includes("apex") ||
@@ -423,7 +432,7 @@ export async function fetchNearbyPlaces(
           }
 
           // Bug 1 fix: distance penalty
-          const finalScore = typeScore - (distance * DISTANCE_WEIGHT);
+          const finalScore   = Math.max(1, typeScore - (distance * DISTANCE_WEIGHT));
           // NEW: tag whether this place matches the hint
           const isSpecialised = hospitalHint
             ? checkIfSpecialised(name, hospitalHint)
@@ -450,24 +459,27 @@ export async function fetchNearbyPlaces(
 
       if (sorted.length > 0) {
         try {
-          // Task 5: cache top 20 (was 5), preserve phone + type, normalize to `lon`
           const offlineCache = sorted.slice(0, 20).map((p) => ({
-            name: p.name,
-            type: p.type,
+            name:     p.name,
+            type:     p.type,
             distance: `${p.distance} km`,
-            lat: p.latitude,
-            lon: p.longitude,   // always write lon (not lng) for consistent reads
-            phone: p.phone ?? undefined,
+            lat:      p.latitude,
+            lon:      p.longitude,
+            phone:    p.phone ?? undefined,
           }));
-          localStorage.setItem("roadsos-last-places", JSON.stringify(offlineCache));
-          localStorage.setItem("roadsos-last-sync", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+          localStorage.setItem("roadsos-last-places",      JSON.stringify(offlineCache));
+          localStorage.setItem("roadsos-last-sync",        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
           localStorage.setItem("roadsos-last-places-type", emergencyType);
         } catch { /* ignore */ }
 
         return sorted;
       }
     } catch (err) {
-      console.error(`Overpass failed at radius ${radius}:`, err);
+      if ((err as Error)?.name === "AbortError") {
+        console.warn(`Overpass timeout at radius ${radius}`);
+      } else {
+        console.error(`Overpass failed at radius ${radius}:`, err);
+      }
       continue;
     }
   }
@@ -491,15 +503,15 @@ export function getCachedPlaces(emergencyType?: EmergencyType): NearbyPlace[] {
     }
 
     return parsed.map((p: any) => ({
-      id: p.id || String(Math.random()),
-      name: p.name,
-      type: p.type || "service",
-      latitude: p.latitude ?? p.lat ?? 0,
+      id:        p.id || String(Math.random()),
+      name:      p.name,
+      type:      p.type || "service",
+      latitude:  p.latitude ?? p.lat ?? 0,
       longitude: p.longitude ?? p.lon ?? 0,
-      distance: typeof p.distance === "string" ? parseFloat(p.distance) : (p.distance ?? 0),
-      eta: p.eta || "—",
-      score: p.score ?? 0,
-      phone: p.phone,
+      distance:  typeof p.distance === "string" ? parseFloat(p.distance) : (p.distance ?? 0),
+      eta:       p.eta || "—",
+      score:     p.score ?? 0,
+      phone:     p.phone,
     }));
   } catch {
     return [];
@@ -513,7 +525,7 @@ export function getCachedPlacesInfo(): {
 } {
   return {
     places: getCachedPlaces(),
-    time: localStorage.getItem("roadsos-last-sync") || "",
-    type: localStorage.getItem("roadsos-last-places-type") || "",
+    time:   localStorage.getItem("roadsos-last-sync") || "",
+    type:   localStorage.getItem("roadsos-last-places-type") || "",
   };
 }
