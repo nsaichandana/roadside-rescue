@@ -12,20 +12,19 @@ const model = genAI.getGenerativeModel({
   model: "gemini-2.0-flash",
 });
 
-/**
- * Analyze an emergency situation and return structured JSON guidance.
- *
- * @param userInput   Free-text description of the emergency.
- * @param country     Resolved CountryEmergency profile. Falls back to
- *                    the synchronous cache (→ India default if uncached).
- */
+let geminiQuotaExceeded = false;
+
 export async function analyzeEmergency(
   userInput: string,
   country?: CountryEmergency,
 ): Promise<string> {
   const c = country ?? getCountryEmergencySync();
 
-  // Build a country-specific number list for the prompt so Gemini picks correctly.
+  if (geminiQuotaExceeded) {
+    console.warn("Gemini quota exceeded — using fallback directly");
+    return getFallbackResponse(c, userInput);
+  }
+
   const numberContext = [
     `All-purpose emergency: ${c.allEmergency}`,
     `Ambulance: ${c.ambulance}`,
@@ -79,24 +78,81 @@ Emergency: "${userInput}"
   try {
     const result = await model.generateContent(prompt);
     return result.response.text();
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini failed:", error);
-    return JSON.stringify({
-      emergency_type: "General Emergency",
-      severity: "Unknown",
-      call_immediately: c.allEmergency,
-      immediate_action: `Call ${c.allEmergency} immediately for emergency assistance.`,
-      do: [
-        "Stay calm and stay at the scene",
-        "Call emergency services immediately",
-        "Share your live location with contacts",
-      ],
-      dont: [
-        "Panic or leave the victim",
-        "Move severely injured persons",
-        "Give water to unconscious victims",
-      ],
-      disclaimer: `AI analysis unavailable. Call ${c.allEmergency} immediately for emergency help.`,
-    });
+    if (error?.message?.includes("429") || error?.message?.includes("quota")) {
+      geminiQuotaExceeded = true;
+    }
+    return getFallbackResponse(c, userInput);
   }
+}
+
+function getFallbackResponse(c: CountryEmergency, userInput: string): string {
+  const input = userInput.toLowerCase();
+
+  let emergency_type = "General Emergency";
+  let severity = "High";
+  let call_immediately = c.allEmergency;
+  let immediate_action = `Call ${c.allEmergency} immediately for emergency assistance.`;
+
+  if (input.match(/heart|chest|breath|unconscious|faint|stroke|bleed|injur/)) {
+    emergency_type = "Medical Emergency";
+    severity = "Critical";
+    call_immediately = c.ambulance;
+    immediate_action = "Call ambulance immediately and keep patient still.";
+  } else if (input.match(/fire|smoke|burn|flame/)) {
+    emergency_type = "Fire Emergency";
+    severity = "Critical";
+    call_immediately = c.fire;
+    immediate_action = "Move away from fire and call fire services immediately.";
+  } else if (input.match(/rob|theft|assault|attack|crime|stolen|danger/)) {
+    emergency_type = "Security Emergency";
+    severity = "High";
+    call_immediately = c.police;
+    immediate_action = "Move to a safe location and call police immediately.";
+  } else if (input.match(/tire|tyre|puncture|breakdown|engine|battery|tow|mechanic/)) {
+    emergency_type = "Vehicle Breakdown";
+    severity = "Moderate";
+    call_immediately = c.highway ?? c.allEmergency;
+    immediate_action = "Move vehicle to road shoulder and turn on hazard lights.";
+  }
+
+  const isTwoWheeler = !!input.match(/bike|motorcycle|scooter|two.?wheel/);
+  if (isTwoWheeler) severity = "Critical";
+
+  return JSON.stringify({
+    emergency_type,
+    severity,
+    call_immediately,
+    immediate_action,
+    do: getDo(emergency_type, isTwoWheeler),
+    dont: getDont(emergency_type, isTwoWheeler),
+    disclaimer: `Offline emergency guidance. Call ${call_immediately} immediately.`,
+  });
+}
+
+function getDo(type: string, isTwoWheeler: boolean): string[] {
+  const base: Record<string, string[]> = {
+    "Medical Emergency": ["Call ambulance immediately", "Keep patient calm and still", "Monitor breathing"],
+    "Fire Emergency": ["Evacuate the area immediately", "Call fire services", "Stay low if there is smoke"],
+    "Security Emergency": ["Move to a safe public area", "Call police immediately", "Note attacker description"],
+    "Vehicle Breakdown": ["Turn on hazard lights", "Move to road shoulder", "Stay behind crash barrier"],
+    "General Emergency": ["Stay calm and stay at the scene", "Call emergency services", "Share your live location"],
+  };
+  const actions = [...(base[type] ?? base["General Emergency"])];
+  if (isTwoWheeler) actions.unshift("Do NOT remove the helmet");
+  return actions.slice(0, 3);
+}
+
+function getDont(type: string, isTwoWheeler: boolean): string[] {
+  const base: Record<string, string[]> = {
+    "Medical Emergency": ["Do not move severely injured persons", "Do not give water to unconscious victims", "Do not panic"],
+    "Fire Emergency": ["Do not re-enter burning vehicle", "Do not use water on electrical fire", "Do not panic"],
+    "Security Emergency": ["Do not confront the attacker", "Do not share location publicly", "Do not panic"],
+    "Vehicle Breakdown": ["Do not stop in middle of road", "Do not stand behind the vehicle", "Do not leave without hazard lights"],
+    "General Emergency": ["Do not panic", "Do not leave the victim", "Do not move severely injured persons"],
+  };
+  const actions = [...(base[type] ?? base["General Emergency"])];
+  if (isTwoWheeler) actions.unshift("Do not remove the helmet");
+  return actions.slice(0, 3);
 }
