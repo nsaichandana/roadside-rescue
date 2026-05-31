@@ -304,76 +304,70 @@ function buildOverpassQuery(
   emergencyType: EmergencyType,
   emergencyInput?: string,
 ): string {
-  const { primary, secondary } = getSearchTags(emergencyType, emergencyInput);
-  const allTags                = [...primary, ...secondary];
-  const input                  = (emergencyInput || "").toLowerCase();
+  const input = (emergencyInput || "").toLowerCase();
 
-  // Pharmacy: OSM tags both amenity=pharmacy AND shop=pharmacy — query both
-  const pharmacyFallback = allTags.includes("pharmacy")
-    ? `node["shop"="pharmacy"](around:${radius},${latitude},${longitude});
-  way["shop"="pharmacy"](around:${radius},${latitude},${longitude});
-  node["amenity"="pharmacy"](around:${radius},${latitude},${longitude});
-  way["amenity"="pharmacy"](around:${radius},${latitude},${longitude});`
-    : "";
+  // Build tag filter rows — only fast indexed tag lookups, no name~ regex
+  const rows: string[] = [];
 
-  const fireFallback = emergencyType === "Fire Emergency"
-    ? `node[name~"fire brigade|fire service|agnishaman|damkal|fire station|agni shaman|fire dept|fire department",i](around:${radius},${latitude},${longitude});
-  way[name~"fire brigade|fire service|agnishaman|damkal|fire station|agni shaman|fire dept|fire department",i](around:${radius},${latitude},${longitude});
-  node["amenity"="fire_station"](around:${radius},${latitude},${longitude});
-  way["amenity"="fire_station"](around:${radius},${latitude},${longitude});
-  node["government"="fire_station"](around:${radius},${latitude},${longitude});
-  way["government"="fire_station"](around:${radius},${latitude},${longitude});`
-    : "";
+  const add = (filter: string) => {
+    rows.push(`node${filter}(around:${radius},${latitude},${longitude});`);
+    rows.push(`way${filter}(around:${radius},${latitude},${longitude});`);
+  };
 
-  const towingFallback = emergencyType === "Vehicle Breakdown"
-    ? `node[name~"towing|tow truck|puncture|tyre|tire|garage|mechanic|workshop|auto repair|bike repair|vehicle rescue|car rescue",i](around:${radius},${latitude},${longitude});
-  node["shop"="car_repair"](around:${radius},${latitude},${longitude});
-  way["shop"="car_repair"](around:${radius},${latitude},${longitude});
-  node["shop"="car"](around:${radius},${latitude},${longitude});
-  way["shop"="car"](around:${radius},${latitude},${longitude});
-  node["shop"="tyres"](around:${radius},${latitude},${longitude});
-  way["shop"="tyres"](around:${radius},${latitude},${longitude});`
-    : "";
+  switch (emergencyType) {
+    case "Medical Emergency":
+      add(`["amenity"="hospital"]`);
+      add(`["amenity"="clinic"]`);
+      add(`["healthcare"="hospital"]`);
+      add(`["amenity"="doctors"]`);
+      // Pharmacy requests come through as Medical Emergency with pharmacy keyword
+      if (input.includes("pharmacy") || input.includes("medical store") || input.includes("medicine")) {
+        add(`["amenity"="pharmacy"]`);
+        add(`["shop"="pharmacy"]`);
+        add(`["shop"="chemist"]`);
+      }
+      break;
 
-  const showroomFallback =
-    emergencyType === "Vehicle Breakdown" &&
-    (input.includes("showroom") || input.includes("service centre") || input.includes("service center"))
-      ? `node["shop"="car"](around:${radius},${latitude},${longitude});
-  way["shop"="car"](around:${radius},${latitude},${longitude});
-  node["shop"="motorcycle"](around:${radius},${latitude},${longitude});
-  way["shop"="motorcycle"](around:${radius},${latitude},${longitude});
-  node[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});
-  way[name~"showroom|service centre|service center|authorized service|authorised service|maruti|hyundai|honda|tata|ford|toyota|kia|mahindra|suzuki|bajaj|hero|tvs",i](around:${radius},${latitude},${longitude});`
-      : "";
+    case "Vehicle Breakdown": {
+      const wantsFuel     = input.includes("fuel") || input.includes("petrol") || input.includes("cng") || input.includes("diesel");
+      const wantsShowroom = input.includes("showroom") || input.includes("service centre") || input.includes("service center");
+      if (wantsFuel) {
+        add(`["amenity"="fuel"]`);
+        add(`["shop"="car_repair"]`);
+      } else if (wantsShowroom) {
+        add(`["shop"="car"]`);
+        add(`["shop"="car_repair"]`);
+        add(`["shop"="motorcycle"]`);
+        add(`["amenity"="fuel"]`);
+      } else {
+        add(`["shop"="car_repair"]`);
+        add(`["shop"="tyres"]`);
+        add(`["shop"="car"]`);
+        add(`["amenity"="fuel"]`);
+        add(`["shop"="motorcycle_repair"]`);
+      }
+      break;
+    }
 
-  const policeFallback = emergencyType === "Security Emergency"
-    ? `node["amenity"="police_station"](around:${radius},${latitude},${longitude});
-  way["amenity"="police_station"](around:${radius},${latitude},${longitude});
-  node[name~"police|thana|thane|chowki|chowkey|kotwali|police station|police chowki",i](around:${radius},${latitude},${longitude});
-  way[name~"police|thana|thane|chowki|chowkey|kotwali|police station|police chowki",i](around:${radius},${latitude},${longitude});`
-    : "";
+    case "Fire Emergency":
+      add(`["amenity"="fire_station"]`);
+      add(`["amenity"="hospital"]`);
+      add(`["amenity"="police"]`);
+      break;
 
-  const emergencyHospitals = emergencyType === "Medical Emergency"
-    ? `node["amenity"="hospital"]["emergency"="yes"](around:${radius},${latitude},${longitude});
-  way["amenity"="hospital"]["emergency"="yes"](around:${radius},${latitude},${longitude});`
-    : "";
+    case "Security Emergency":
+      add(`["amenity"="police"]`);
+      add(`["amenity"="police_station"]`);
+      add(`["amenity"="hospital"]`);
+      break;
 
-  return `
-[out:json][timeout:20];
-(
-  ${policeFallback}
-  ${emergencyHospitals}
-  ${allTags.map((tag) =>
-    `node["amenity"="${tag}"](around:${radius},${latitude},${longitude});
-  way["amenity"="${tag}"](around:${radius},${latitude},${longitude});`
-  ).join("\n  ")}
-  ${pharmacyFallback}
-  ${fireFallback}
-  ${towingFallback}
-  ${showroomFallback}
-);
-out center;
-  `.trim();
+    default:
+      add(`["amenity"="hospital"]`);
+      add(`["amenity"="police"]`);
+      break;
+  }
+
+  return `[out:json][timeout:25];(\n${rows.join("\n")}\n);out center;`;
 }
 
 // ─── Main Fetch Function ──────────────────────────────────────────────────────
@@ -393,21 +387,44 @@ export async function fetchNearbyPlaces(
   for (const radius of radii) {
     const query = buildOverpassQuery(latitude, longitude, radius, emergencyType, emergencyInput);
 
-    try {
-      const controller = new AbortController();
-      const timeoutId  = setTimeout(() => controller.abort(), 8000);
+    console.log(`[places] Querying radius=${radius}m type=${emergencyType}`);
 
-      const response = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) continue;
+    // Try multiple Overpass mirrors in order
+    const ENDPOINTS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    ];
 
-      const data = await response.json();
-      if (!data.elements || data.elements.length === 0) continue;
+    let data: any = null;
+
+    for (const endpoint of ENDPOINTS) {
+      try {
+        const controller = new AbortController();
+        const timeoutId  = setTimeout(() => controller.abort(), 15000);
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `data=${encodeURIComponent(query)}`,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.warn(`[places] ${endpoint} returned ${response.status}`);
+          continue;
+        }
+
+        data = await response.json();
+        console.log(`[places] ${endpoint} → ${data?.elements?.length ?? 0} elements`);
+        break; // success — stop trying other mirrors
+      } catch (err: any) {
+        console.warn(`[places] ${endpoint} failed:`, err?.message ?? err);
+      }
+    }
+
+    if (!data || !data.elements || data.elements.length === 0) continue;
 
       // Deduplicate by OSM id (Bug 4)
       const seen   = new Set<string>();
@@ -495,14 +512,6 @@ export async function fetchNearbyPlaces(
 
         return sorted;
       }
-    } catch (err) {
-      if ((err as Error)?.name === "AbortError") {
-        console.warn(`Overpass timeout at radius ${radius}`);
-      } else {
-        console.error(`Overpass failed at radius ${radius}:`, err);
-      }
-      continue;
-    }
   }
 
   return getCachedPlaces(emergencyType);
