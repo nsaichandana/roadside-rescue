@@ -294,6 +294,15 @@ function Offline() {
   // FIX: load country from cache so emergency numbers are country-aware, not India-hardcoded
   const [country, setCountry] = useState<CountryEmergency>(getCountryEmergencySync());
 
+  const handleSync = () => {
+    const syncTime = new Date().toLocaleString();
+
+    localStorage.setItem("roadsos-last-sync", syncTime);
+    setLastSync(syncTime);
+
+    window.dispatchEvent(new Event("online"));
+  };
+
   useEffect(() => {
     // Re-read country from cache (may have been updated by a previous online session)
     setCountry(getCountryEmergencySync());
@@ -381,7 +390,7 @@ function Offline() {
             </p>
           </div>
           <button
-            onClick={() => navigate({ to: "/nearby" })}
+            onClick={handleSync}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card text-xs font-semibold border border-border"
           >
             <RefreshCw className="w-3.5 h-3.5" />
