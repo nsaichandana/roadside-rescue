@@ -3,6 +3,14 @@
  *
  * Uses @capacitor/geolocation on native (Android/iOS) and
  * browser navigator.geolocation on web. Same API for both.
+ *
+ * FIXES:
+ * 1. maximumAge reduced to 10s (was 60s) — prevents OS serving stale city fix
+ * 2. getCachedLocation now rejects fixes older than 5 minutes
+ * 3. Separate cache key "roadsos-location-fix" — prevents trip.tsx writing
+ *    { lat, lng, address } to the same key and corrupting location reads
+ * 4. getCachedLocation handles all three shapes: { lat,lon } { lat,lng }
+ *    { latitude,longitude } — covers trip.tsx and old cache entries
  */
 
 import { Geolocation } from "@capacitor/geolocation";
@@ -13,7 +21,14 @@ export type UserLocation = {
   longitude: number;
 };
 
-const LOCATION_CACHE_KEY = "roadsos-last-location";
+// Separate key from trip.tsx which writes { lat, lng, address, updatedAt }
+// to "roadsos-last-location". Using a dedicated key prevents that stale
+// Tirupati/previous-city fix from being served here.
+const LOCATION_CACHE_KEY = "roadsos-location-fix";
+
+// Only trust cached fixes less than 5 minutes old.
+// trip.tsx may have written a fix hours ago from a different city.
+const CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +46,12 @@ function getCachedLocation(): UserLocation | null {
     const raw = localStorage.getItem(LOCATION_CACHE_KEY);
     if (!raw) return null;
     const d = JSON.parse(raw);
+
+    // Reject fixes older than CACHE_MAX_AGE_MS
+    const age = Date.now() - (d.ts ?? 0);
+    if (age > CACHE_MAX_AGE_MS) return null;
+
+    // Handle all three cache shapes
     const lat = d?.lat ?? d?.latitude;
     const lon = d?.lon ?? d?.longitude ?? d?.lng;
     if (lat && lon) return { latitude: lat, longitude: lon };
@@ -57,7 +78,7 @@ async function getLocationWeb(): Promise<UserLocation> {
     const coarse = await webGetPosition({
       enableHighAccuracy: false,
       timeout: 6000,
-      maximumAge: 60000,
+      maximumAge: 10000,   // FIX: was 60000 — only accept fix up to 10s old
     });
     const loc: UserLocation = {
       latitude: coarse.coords.latitude,
@@ -98,7 +119,7 @@ async function getLocationNative(): Promise<UserLocation> {
     const coarse = await Geolocation.getCurrentPosition({
       enableHighAccuracy: false,
       timeout: 6000,
-      maximumAge: 60000,
+      maximumAge: 10000,   // FIX: was 60000 — only accept fix up to 10s old
     });
     const loc: UserLocation = {
       latitude: coarse.coords.latitude,
