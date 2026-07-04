@@ -679,16 +679,30 @@ function Nearby() {
 
       } catch (err: any) {
         const msg: string = err?.message ?? "";
+
+        const isGpsError =
+          msg.includes("enable GPS") ||
+          msg.includes("timed out") ||
+          msg.includes("permission denied") ||
+          msg.includes("Location") ||
+          err?.code === 3 ||
+          err?.code === 2;
+
         const networkFail =
-          msg.toLowerCase().includes("network") ||
-          msg.toLowerCase().includes("fetch") ||
-          msg.toLowerCase().includes("failed to fetch") ||
-          !navigator.onLine;
+          !isGpsError && (
+            msg.toLowerCase().includes("failed to fetch") ||
+            msg.toLowerCase().includes("networkerror") ||
+            (!navigator.onLine)
+          );
 
         if (networkFail) {
           setIsOffline(true);
         } else {
-          setError(msg || "Unable to fetch nearby services.");
+          setError(
+            isGpsError
+              ? "Could not get your location — check GPS or location permissions."
+              : (msg || "Unable to fetch nearby services.")
+          );
         }
       } finally {
         setLoading(false);

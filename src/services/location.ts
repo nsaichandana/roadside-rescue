@@ -77,8 +77,8 @@ async function getLocationWeb(): Promise<UserLocation> {
   try {
     const coarse = await webGetPosition({
       enableHighAccuracy: false,
-      timeout: 6000,
-      maximumAge: 10000,   // FIX: was 60000 — only accept fix up to 10s old
+      timeout: 15000,        // FIX: was 6000 — laptops need more time for WiFi positioning
+      maximumAge: 30000,     // Accept fix up to 30s old — balances freshness vs speed
     });
     const loc: UserLocation = {
       latitude: coarse.coords.latitude,
@@ -93,10 +93,14 @@ async function getLocationWeb(): Promise<UserLocation> {
 
     return loc;
   } catch (err: any) {
+    // GPS timeout (code 3) or unavailable (code 2) — try cache before failing
     const cached = getCachedLocation();
     if (cached) return cached;
     if (err?.code === 1) {
-      throw new Error("Location permission denied. Please allow location access in your browser settings.");
+      throw new Error("PERMISSION_DENIED: Location permission denied. Please allow location access.");
+    }
+    if (err?.code === 3) {
+      throw new Error("TIMEOUT: Location fix timed out. Please check GPS settings.");
     }
     throw new Error("Unable to fetch location. Please enable GPS.");
   }
