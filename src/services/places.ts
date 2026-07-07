@@ -358,7 +358,6 @@ function buildOverpassQuery(
     case "Security Emergency":
       add(`["amenity"="police"]`);
       add(`["amenity"="police_station"]`);
-      add(`["amenity"="hospital"]`);
       break;
 
     default:
@@ -383,6 +382,10 @@ export async function fetchNearbyPlaces(
   const isTwoWheeler = emergencyInput ? detectTwoWheelerRisk(emergencyInput) : false;
   const isHeadTrauma = emergencyInput ? detectHeadTraumaRisk(emergencyInput) : false;
   const needsTrauma  = isTwoWheeler || isHeadTrauma;
+
+  // CHANGE 1: accumulate results across all radii instead of returning early
+  const allPlaces: NearbyPlace[] = [];
+  const MIN_RESULTS = 15;
 
   for (const radius of radii) {
     const query = buildOverpassQuery(latitude, longitude, radius, emergencyType, emergencyInput);
@@ -444,7 +447,9 @@ export async function fetchNearbyPlaces(
 
           const tags     = el.tags || {};
           const osmType  = tags.amenity || tags.shop || "service";
-          const name     = tags.name || "Emergency Service";
+          const name     = tags.name || (osmType === "police" ? "Nearby Police Station" :
+   osmType === "hospital" ? "Nearby Hospital" :
+   "Emergency Service");
           const type     = normaliseType(osmType, name, emergencyInput);
           const distance = calculateDistance(latitude, longitude, lat, lon);
 
@@ -493,25 +498,46 @@ export async function fetchNearbyPlaces(
         })
         .filter((p): p is NearbyPlace => p !== null);
 
-      const sorted = places.sort((a, b) => b.score - a.score).slice(0, 10);
+      const sorted = places.sort((a, b) => b.score - a.score);
 
-      if (sorted.length > 0) {
-        try {
-          const offlineCache = sorted.slice(0, 20).map((p) => ({
-            name:     p.name,
-            type:     p.type,
-            distance: `${p.distance} km`,
-            lat:      p.latitude,
-            lon:      p.longitude,
-            phone:    p.phone ?? undefined,
-          }));
-          localStorage.setItem("roadsos-last-places",      JSON.stringify(offlineCache));
-          localStorage.setItem("roadsos-last-sync",        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
-          localStorage.setItem("roadsos-last-places-type", emergencyType);
-        } catch { /* ignore */ }
+      // CHANGE 1: accumulate this radius's results instead of returning immediately
+      allPlaces.push(...sorted);
 
-        return sorted;
+      // CHANGE 6: stop searching larger radii once enough unique results are found
+      const uniqueSoFar = new Map(allPlaces.map((place) => [place.id, place]));
+      if (uniqueSoFar.size >= MIN_RESULTS) {
+        break;
       }
+  }
+
+  // CHANGE 2: remove duplicates across all searched radii (by OSM id)
+  const uniquePlaces = Array.from(
+    new Map(allPlaces.map((place) => [place.id, place])).values()
+  );
+
+  // CHANGE 3: final sort using the existing (unmodified) scoring system
+  uniquePlaces.sort((a, b) => b.score - a.score);
+
+  // CHANGE 4: return up to 20 results
+  const finalResults = uniquePlaces.slice(0, 25);
+
+  if (finalResults.length > 0) {
+    try {
+      // CHANGE 5: cache finalResults instead of the single-radius `sorted` list
+      const offlineCache = finalResults.map((p) => ({
+        name:     p.name,
+        type:     p.type,
+        distance: `${p.distance} km`,
+        lat:      p.latitude,
+        lon:      p.longitude,
+        phone:    p.phone ?? undefined,
+      }));
+      localStorage.setItem("roadsos-last-places",      JSON.stringify(offlineCache));
+      localStorage.setItem("roadsos-last-sync",        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      localStorage.setItem("roadsos-last-places-type", emergencyType);
+    } catch { /* ignore */ }
+
+    return finalResults;
   }
 
   return getCachedPlaces(emergencyType);
