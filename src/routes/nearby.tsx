@@ -561,6 +561,13 @@ function Nearby() {
   const [country, setCountry] = useState<CountryEmergency>(getCountryEmergencySync());
   const [verifiedFallback, setVerifiedFallback] =
     useState<(TraumaCentre & { distance: number }) | null>(null);
+  const fireStations = places.filter((p) => p.type === "fire_station");
+  const hospitals = places.filter((p) => p.type === "hospital");
+  const policeStations = places.filter((p) => p.type === "police");
+  const mechanics = places.filter((p) => p.type === "mechanic");
+  const pharmacies = places.filter((p) => p.type === "pharmacy");
+  const fuelStations = places.filter((p) => p.type === "fuel");
+  const showrooms = places.filter((p) => p.type === "showroom");
 
   // Prevent double-fire in React strict mode dev
   const didLoad = useRef(false);
